@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, Segoe UI, Arial, sans-serif; }
+button, input, select { font: inherit; }
+
+@layer components {
+  .page-eyebrow { @apply text-sm font-black uppercase tracking-[0.18em] text-mint; }
+  .page-title { @apply mt-1 text-3xl font-black tracking-normal md:text-4xl; }
+  .panel { @apply rounded-lg border border-white/70 bg-white/80 p-5 shadow-panel backdrop-blur-xl transition dark:border-white/10 dark:bg-slate-900/75; }
+  .metric-card { @apply flex min-h-32 items-center gap-4 rounded-lg border border-white/70 bg-white/80 p-5 shadow-panel backdrop-blur-xl transition hover:-translate-y-1 dark:border-white/10 dark:bg-slate-900/75; }
+  .nav-button { @apply flex h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-black text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10; }
+  .nav-active { @apply bg-ocean text-white shadow-lg hover:bg-ocean dark:text-white; }
+  .icon-button { @apply relative grid h-11 w-11 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-mint hover:text-ocean dark:border-white/10 dark:bg-white/5 dark:text-slate-200; }
+  .input { @apply h-12 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold outline-none transition focus:border-mint focus:ring-4 focus:ring-mint/10 dark:border-white/10 dark:bg-white/5 dark:text-slate-100; }
+  .filter-bar { @apply grid gap-3 rounded-lg border border-white/70 bg-white/60 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 md:grid-cols-4; }
+  .empty { @apply rounded-lg border border-dashed border-slate-300 p-8 text-center text-slate-500 dark:border-white/10; }
+  .activity-row { @apply flex items-center gap-3 rounded-lg border border-slate-200/70 bg-white/60 p-3 transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-white/5; }
+  .data-table { @apply w-full min-w-[620px] border-separate border-spacing-y-2 text-left text-sm; }
+  .data-table th { @apply px-3 py-2 text-xs uppercase tracking-[0.12em] text-slate-500; }
+  .data-table td { @apply bg-slate-50 px-3 py-3 first:rounded-l-lg last:rounded-r-lg dark:bg-white/5; }
+  .secondary-button { @apply h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black transition hover:border-mint dark:border-white/10 dark:bg-white/5; }
+  .report-action { @apply flex min-h-36 items-center justify-between gap-4 rounded-lg border border-white/70 bg-white/80 p-6 text-left text-xl font-black shadow-panel transition hover:-translate-y-1 hover:border-mint dark:border-white/10 dark:bg-slate-900/75; }
+}

@@ -1,0 +1,19 @@
+date,product,quantity,sales
+2025-01-01,Laptop Pro,45,54000
+2025-02-01,Laptop Pro,51,61200
+2025-03-01,Laptop Pro,49,58800
+2025-04-01,Laptop Pro,58,69600
+2025-05-01,Laptop Pro,63,75600
+2025-06-01,Laptop Pro,71,85200
+2025-01-01,Wireless Mouse,160,4800
+2025-02-01,Wireless Mouse,172,5160
+2025-03-01,Wireless Mouse,181,5430
+2025-04-01,Wireless Mouse,190,5700
+2025-05-01,Wireless Mouse,205,6150
+2025-06-01,Wireless Mouse,218,6540
+2025-01-01,Office Chair,32,6400
+2025-02-01,Office Chair,38,7600
+2025-03-01,Office Chair,42,8400
+2025-04-01,Office Chair,47,9400
+2025-05-01,Office Chair,52,10400
+2025-06-01,Office Chair,55,11000
