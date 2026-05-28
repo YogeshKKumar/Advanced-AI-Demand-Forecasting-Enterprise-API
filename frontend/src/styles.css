@@ -23,4 +23,35 @@ button, input, select { font: inherit; }
   .data-table td { @apply bg-slate-50 px-3 py-3 first:rounded-l-lg last:rounded-r-lg dark:bg-white/5; }
   .secondary-button { @apply h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black transition hover:border-mint dark:border-white/10 dark:bg-white/5; }
   .report-action { @apply flex min-h-36 items-center justify-between gap-4 rounded-lg border border-white/70 bg-white/80 p-6 text-left text-xl font-black shadow-panel transition hover:-translate-y-1 hover:border-mint dark:border-white/10 dark:bg-slate-900/75; }
+  .live-toggle { @apply inline-flex h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-500 transition hover:border-mint dark:border-white/10 dark:bg-white/5 dark:text-slate-300; }
+  .live-active { @apply border-mint bg-mint/10 text-teal-700 dark:text-mint; }
+  .live-dot { @apply h-2.5 w-2.5 rounded-full bg-current; }
+  .risk-row { @apply flex items-center gap-3 rounded-lg border border-slate-200/70 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5; }
+  .risk-pill { @apply rounded-full px-2 py-1 text-xs font-black uppercase; }
+  .risk-high { @apply bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300; }
+  .risk-medium { @apply bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300; }
+  .risk-low { @apply bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300; }
+  .insight-row { @apply flex items-start gap-2 rounded-lg border border-mint/20 bg-mint/5 p-3 text-sm; }
+  .compact-select { @apply rounded-md border border-slate-200 bg-white px-2 py-1 text-sm font-semibold dark:border-white/10 dark:bg-white/5; }
+  .workflow-bar { @apply flex flex-wrap items-center gap-3 rounded-lg border border-white/70 bg-white/60 p-4 shadow-sm dark:border-white/10 dark:bg-white/5; }
+  .workflow-bar > div:first-child { @apply mr-auto min-w-48; }
+  .quick-action { @apply inline-flex h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-slate-600 transition hover:-translate-y-0.5 hover:border-mint hover:text-ocean dark:border-white/10 dark:bg-white/5 dark:text-slate-200; }
+  .insight-hero { @apply rounded-lg bg-ocean p-6 text-white shadow-panel; }
+  .brief-item { @apply rounded-lg border border-white/20 bg-white/10 p-4 text-sm leading-6; }
+  .rank-row { @apply flex items-center gap-3 rounded-lg bg-slate-50 p-3 text-sm dark:bg-white/5; }
+  .rank-row span { @apply ml-auto text-slate-500; }
+  .tag { @apply rounded-full bg-mint/10 px-3 py-1.5 text-xs font-black text-teal-700 dark:text-mint; }
+  .segmented { @apply inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-white/10 dark:bg-white/5; }
+  .segmented button { @apply h-9 rounded-md px-3 text-sm font-black capitalize text-slate-500; }
+  .segmented .segment-active { @apply bg-white text-ocean shadow-sm dark:bg-white/10 dark:text-white; }
+  .inventory-item { @apply flex items-center gap-3 rounded-lg border border-slate-200/70 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5; }
+  .inventory-item .risk-pill { @apply ml-auto; }
+  .risk-ring { @apply grid h-12 w-12 shrink-0 place-items-center rounded-full text-xs font-black; }
+  .alert-record { @apply flex items-center gap-3 rounded-lg border border-slate-200/70 p-3 text-sm dark:border-white/10; }
+  .alert-record p { @apply text-slate-500; }
+  .alert-record strong { @apply ml-auto; }
+  .season-row { @apply flex items-center gap-3 text-sm; }
+  .season-row span { @apply w-10 font-black; }
+  .season-bar { @apply h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10; }
+  .season-bar i { @apply block h-full rounded-full bg-mint; }
 }

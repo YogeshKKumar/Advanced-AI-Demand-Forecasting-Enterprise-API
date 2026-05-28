@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { BarChart3, Bell, Database, FileText, LineChart, LogOut, Moon, Shield, Sun, UploadCloud } from "lucide-react";
+import { BarChart3, Bell, Database, FileText, LineChart, LogOut, Moon, Search, Shield, Sparkles, Sun, UploadCloud } from "lucide-react";
 import api from "../api/client";
 import { useAuth } from "../state/AuthContext";
 
 const nav = [
   { id: "dashboard", label: "Dashboard", icon: BarChart3 },
+  { id: "insights", label: "Intelligence", icon: Sparkles },
   { id: "upload", label: "Upload", icon: UploadCloud },
   { id: "forecast", label: "Forecast", icon: LineChart },
   { id: "reports", label: "Reports", icon: FileText }
@@ -14,7 +15,11 @@ export default function Layout({ activePage, setActivePage, notifications, refre
   const { user, logout } = useAuth();
   const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark");
   const [open, setOpen] = useState(false);
-  const items = user?.role === "admin" ? [...nav, { id: "admin", label: "Admin", icon: Shield }] : nav;
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null);
+  const editableNav = user?.role === "viewer" ? nav.filter((item) => ["dashboard", "insights", "reports"].includes(item.id)) : nav;
+  const items = ["admin", "super_admin"].includes(user?.role) ? [...editableNav, { id: "admin", label: "Admin", icon: Shield }] : editableNav;
   const unread = notifications.filter((item) => !item.is_read).length;
 
   useEffect(() => {
@@ -25,6 +30,13 @@ export default function Layout({ activePage, setActivePage, notifications, refre
   const read = async (id) => {
     await api.post(`/notifications/${id}/read`);
     refreshNotifications();
+  };
+
+  const search = async (event) => {
+    event.preventDefault();
+    if (!query.trim()) return;
+    const { data } = await api.get(`/search?q=${encodeURIComponent(query.trim())}`);
+    setResults(data);
   };
 
   return (
@@ -69,6 +81,19 @@ export default function Layout({ activePage, setActivePage, notifications, refre
               </div>
               <button onClick={() => setDark(!dark)} className="icon-button" title="Toggle theme">{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
               <div className="relative">
+                <button onClick={() => setSearchOpen(!searchOpen)} className="icon-button" title="Global search"><Search size={18} /></button>
+                {searchOpen && (
+                  <form onSubmit={search} className="absolute right-0 mt-2 w-[23rem] rounded-lg border border-white/70 bg-white/95 p-3 shadow-panel dark:border-white/10 dark:bg-slate-900/95">
+                    <div className="flex gap-2"><input className="input min-w-0 flex-1" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search datasets, models, users" /><button className="secondary-button" type="submit">Search</button></div>
+                    {results && <div className="mt-3 max-h-72 space-y-3 overflow-auto text-sm">
+                      <SearchGroup title="Datasets" rows={results.datasets.map((row) => row.name)} />
+                      <SearchGroup title="Forecasts" rows={results.forecasts.map((row) => `${row.dataset} - ${row.model_name}`)} />
+                      <SearchGroup title="Users" rows={results.users.map((row) => `${row.name} - ${row.role}`)} />
+                    </div>}
+                  </form>
+                )}
+              </div>
+              <div className="relative">
                 <button onClick={() => setOpen(!open)} className="icon-button" title="Notifications">
                   <Bell size={18} />{unread > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-xs font-bold text-white">{unread}</span>}
                 </button>
@@ -99,4 +124,9 @@ export default function Layout({ activePage, setActivePage, notifications, refre
 
 function EmptyState({ title }) {
   return <p className="rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500 dark:border-white/10">{title}</p>;
+}
+
+function SearchGroup({ title, rows }) {
+  if (!rows.length) return null;
+  return <div><p className="mb-1 text-xs font-black uppercase text-slate-400">{title}</p>{rows.map((row) => <p key={row} className="rounded-md px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-white/10">{row}</p>)}</div>;
 }

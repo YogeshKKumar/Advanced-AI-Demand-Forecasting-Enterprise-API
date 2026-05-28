@@ -63,6 +63,19 @@ class ForecastRequest(BaseModel):
     model_name: str = Field("linear_regression", examples=["random_forest"])
 
 
+class LiveSalesIn(BaseModel):
+    date: date
+    product: str = Field(..., min_length=1)
+    category: str = "General"
+    region: str = "All Regions"
+    quantity: float = Field(..., ge=0)
+    sales: float = Field(..., ge=0)
+
+
+class RoleUpdateIn(BaseModel):
+    role: str = Field(..., pattern="^(super_admin|analyst|viewer)$")
+
+
 class ForecastPoint(BaseModel):
     date: date
     product: str
@@ -130,6 +143,56 @@ class AnalyticsOut(BaseModel):
     forecast: List[ForecastPoint]
     recent_activity: List[Dict[str, Any]]
     filters: Dict[str, Any]
+
+
+class AdvancedAnalyticsOut(BaseModel):
+    revenue_prediction: float
+    predicted_units: float
+    inventory_risk: List[Dict[str, Any]]
+    region_forecasts: List[Dict[str, Any]]
+    category_insights: List[Dict[str, Any]]
+    seasonal_trends: List[Dict[str, Any]]
+    anomalies: List[Dict[str, Any]]
+    generated_insights: List[str]
+    last_refreshed: datetime
+
+
+class RealtimeSnapshotOut(BaseModel):
+    dataset_id: int
+    latest_sales: List[Dict[str, Any]]
+    rolling_sales: float
+    latest_forecast: List[ForecastPoint]
+    refreshed_at: datetime
+
+
+class RetrainingOut(BaseModel):
+    id: int
+    dataset_id: int
+    selected_model: str
+    previous_accuracy: float
+    new_accuracy: float
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SearchResultsOut(BaseModel):
+    datasets: List[Dict[str, Any]]
+    forecasts: List[Dict[str, Any]]
+    reports: List[Dict[str, Any]]
+    users: List[Dict[str, Any]]
+
+
+class MonitoringOut(BaseModel):
+    requests_last_hour: int
+    error_rate: float
+    average_duration_ms: float
+    slowest_endpoints: List[Dict[str, Any]]
+    activity_count: int
+    retraining_jobs: int
+    generated_at: datetime
 
 
 class NotificationOut(BaseModel):

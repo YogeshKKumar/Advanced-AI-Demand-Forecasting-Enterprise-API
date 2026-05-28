@@ -2,7 +2,15 @@
 
 Developed by Yogeshwaran K
 
-Enterprise full-stack AI demand forecasting platform built with FastAPI, React, JWT authentication, role-based access, model comparison, analytics, notifications, admin APIs, and exportable reports.
+Enterprise full-stack AI demand forecasting platform built with FastAPI and React. Phase 4 adds real-time sales monitoring, automatic ensemble forecast refresh, model retraining, anomaly and seasonal intelligence, AI-generated insights, inventory risk analytics, global search, three-level permissions, cached dashboards, and API performance monitoring.
+
+## Roles
+
+- `super_admin`: user and system administration plus all operational features.
+- `analyst`: upload data, create forecasts, run retraining, and export reports.
+- `viewer`: dashboard, analytics, reports, and read-only monitoring of authorized datasets.
+
+The first account registered is assigned `super_admin`.
 
 ## Quick Start
 

@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     app_name: str = "Advanced AI Demand Forecasting Enterprise API - Developed by Yogeshwaran K"
-    app_version: str = "3.0.0"
+    app_version: str = "4.0.0"
     database_url: str = "sqlite:///./enterprise_forecasting.db"
     jwt_secret: str = "change-this-enterprise-secret"
     jwt_algorithm: str = "HS256"

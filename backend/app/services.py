@@ -20,7 +20,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .models import ActivityLog, Dataset, ForecastResult, ForecastRun, ModelMetric, Notification, SalesRecord, User
+from .models import ActivityLog, Dataset, ForecastResult, ForecastRun, ModelMetric, Notification, RetrainingJob, SalesRecord, User
 
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
 
@@ -35,7 +35,7 @@ except Exception:
     Prophet = None
 
 
-SUPPORTED_MODELS = ["linear_regression", "random_forest", "xgboost", "prophet"]
+SUPPORTED_MODELS = ["linear_regression", "random_forest", "xgboost", "prophet", "ensemble"]
 REQUIRED_COLUMNS = {"date", "product", "quantity", "sales"}
 OPTIONAL_COLUMNS = {"category", "region"}
 
@@ -81,7 +81,7 @@ def normalize_dataset(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
 
 def get_user_dataset(db: Session, dataset_id: int, user: User) -> Dataset:
     query = db.query(Dataset).filter(Dataset.id == dataset_id)
-    if user.role != "admin":
+    if user.role not in {"admin", "super_admin"}:
         query = query.filter(Dataset.owner_id == user.id)
     dataset = query.first()
     if not dataset:
@@ -109,6 +109,18 @@ def _fit_predict(monthly: pd.DataFrame, model_name: str, periods: int) -> Tuple[
     split_at = max(2, int(len(monthly) * 0.8))
     train, test = monthly.iloc[:split_at], monthly.iloc[split_at:]
     future_steps = np.arange(len(monthly), len(monthly) + periods).reshape(-1, 1)
+
+    if model_name == "ensemble":
+        member_results = [_fit_predict(monthly, member, periods) for member in ["linear_regression", "random_forest", "xgboost"]]
+        futures = np.array([result[0] for result in member_results])
+        future = np.mean(futures, axis=0).tolist()
+        member_scores = [result[1] for result in member_results]
+        score = {
+            metric: round(float(np.mean([item[metric] for item in member_scores])), 2)
+            for metric in ["rmse", "mae", "accuracy", "confidence_score"]
+        }
+        score["confidence_score"] = min(99, round(score["confidence_score"] + 2, 2))
+        return [max(0, round(float(value), 2)) for value in future], score
 
     if model_name == "prophet" and Prophet is not None:
         prophet_train = train.rename(columns={"date": "ds", "quantity": "y"})[["ds", "y"]]
@@ -170,6 +182,7 @@ def train_and_forecast(db: Session, dataset_id: int, periods: int, model_name: s
     db.add(run)
     db.flush()
     aggregate = []
+    prediction_count = 0
     for product, product_df in df.groupby("product"):
         monthly = product_df.set_index("date")["quantity"].resample("MS").sum().reset_index()
         predictions, score = _fit_predict(monthly, model_name, periods)
@@ -190,11 +203,12 @@ def train_and_forecast(db: Session, dataset_id: int, periods: int, model_name: s
                 accuracy=score["accuracy"],
                 confidence_score=score["confidence_score"],
             ))
+            prediction_count += 1
     run.rmse = round(float(np.mean([item["rmse"] for item in aggregate])), 2)
     run.mae = round(float(np.mean([item["mae"] for item in aggregate])), 2)
     run.accuracy = round(float(np.mean([item["accuracy"] for item in aggregate])), 2)
     run.confidence_score = round(float(np.mean([item["confidence_score"] for item in aggregate])), 2)
-    run.total_predictions = db.query(ForecastResult).filter(ForecastResult.run_id == run.id).count()
+    run.total_predictions = prediction_count
     db.flush()
     return run
 
@@ -245,6 +259,134 @@ def analytics_payload(db: Session, dataset_id: int, start_date: Optional[str], e
         "recent_activity": [{"id": item.id, "action": item.action, "entity_type": item.entity_type, "metadata": json.loads(item.metadata_json), "created_at": item.created_at} for item in activity],
         "filters": {"start_date": start_date, "end_date": end_date, "category": category, "region": region},
     }
+
+
+def realtime_snapshot(db: Session, dataset_id: int) -> Dict[str, Any]:
+    latest_rows = db.query(SalesRecord).filter(SalesRecord.dataset_id == dataset_id).order_by(SalesRecord.date.desc(), SalesRecord.id.desc()).limit(12).all()
+    latest_run = db.query(ForecastRun).filter(ForecastRun.dataset_id == dataset_id).order_by(ForecastRun.created_at.desc()).first()
+    return {
+        "dataset_id": dataset_id,
+        "latest_sales": [{
+            "date": row.date,
+            "product": row.product,
+            "category": row.category,
+            "region": row.region,
+            "quantity": row.quantity,
+            "sales": row.sales,
+        } for row in latest_rows],
+        "rolling_sales": round(sum(row.sales for row in latest_rows), 2),
+        "latest_forecast": forecast_points(latest_run) if latest_run else [],
+        "refreshed_at": datetime.utcnow(),
+    }
+
+
+def detect_anomalies(db: Session, dataset_id: int) -> List[Dict[str, Any]]:
+    rows = db.query(SalesRecord).filter(SalesRecord.dataset_id == dataset_id).order_by(SalesRecord.date).all()
+    if not rows:
+        return []
+    frame = pd.DataFrame([{"date": row.date, "product": row.product, "quantity": row.quantity, "sales": row.sales} for row in rows])
+    findings: List[Dict[str, Any]] = []
+    for product, product_frame in frame.groupby("product"):
+        quantity = product_frame["quantity"].astype(float)
+        median = max(float(quantity.median()), 1)
+        deviation = (quantity - median).abs()
+        threshold = max(float(deviation.median()) * 3, median * 0.35)
+        for row in product_frame[deviation > threshold].itertuples(index=False):
+            delta = abs(float(row.quantity) - median) / median * 100
+            findings.append({
+                "product": product,
+                "date": row.date,
+                "observed_quantity": round(float(row.quantity), 2),
+                "expected_quantity": round(median, 2),
+                "deviation_percent": round(delta, 2),
+                "severity": "high" if delta >= 65 else "medium",
+            })
+    return sorted(findings, key=lambda item: item["deviation_percent"], reverse=True)[:20]
+
+
+def seasonal_trends(db: Session, dataset_id: int) -> List[Dict[str, Any]]:
+    rows = db.query(SalesRecord).filter(SalesRecord.dataset_id == dataset_id).order_by(SalesRecord.date).all()
+    if not rows:
+        return []
+    frame = pd.DataFrame([{"date": row.date, "quantity": row.quantity, "sales": row.sales} for row in rows])
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["month"] = frame["date"].dt.strftime("%b")
+    frame["month_number"] = frame["date"].dt.month
+    monthly = frame.groupby(["month_number", "month"], as_index=False).agg(quantity=("quantity", "mean"), sales=("sales", "mean")).sort_values("month_number")
+    baseline = max(float(monthly["quantity"].mean()), 1)
+    monthly["trend_percent"] = ((monthly["quantity"] - baseline) / baseline * 100).round(2)
+    monthly["signal"] = monthly["trend_percent"].apply(lambda value: "peak" if value > 12 else "low" if value < -12 else "stable")
+    return monthly[["month", "quantity", "sales", "trend_percent", "signal"]].to_dict("records")
+
+
+def advanced_analytics_payload(db: Session, dataset_id: int) -> Dict[str, Any]:
+    records = db.query(SalesRecord).filter(SalesRecord.dataset_id == dataset_id).all()
+    latest_run = db.query(ForecastRun).filter(ForecastRun.dataset_id == dataset_id).order_by(ForecastRun.created_at.desc()).first()
+    frame = pd.DataFrame([{"product": row.product, "category": row.category, "region": row.region, "quantity": row.quantity, "sales": row.sales} for row in records])
+    if frame.empty:
+        return {"revenue_prediction": 0, "predicted_units": 0, "inventory_risk": [], "region_forecasts": [], "category_insights": [], "seasonal_trends": [], "anomalies": [], "generated_insights": [], "last_refreshed": datetime.utcnow()}
+    product_forecasts: Dict[str, float] = {}
+    if latest_run:
+        for result in latest_run.results:
+            product_forecasts[result.product] = product_forecasts.get(result.product, 0) + result.predicted_demand
+    else:
+        product_forecasts = frame.groupby("product")["quantity"].sum().to_dict()
+    unit_value = float(frame["sales"].sum() / max(frame["quantity"].sum(), 1))
+    predicted_units = round(float(sum(product_forecasts.values())), 2)
+    revenue_prediction = round(predicted_units * unit_value, 2)
+    inventory = []
+    for product, demand in product_forecasts.items():
+        available = float(frame.loc[frame["product"] == product, "quantity"].tail(3).mean())
+        coverage = round(available / max(demand / max(latest_run.periods if latest_run else 1, 1), 1), 2)
+        inventory.append({"product": product, "forecast_units": round(demand, 2), "available_baseline": round(available, 2), "coverage_ratio": coverage, "risk": "high" if coverage < 0.8 else "medium" if coverage < 1.15 else "low"})
+    region_share = frame.groupby("region", as_index=False)["sales"].sum()
+    region_share["share"] = region_share["sales"] / max(float(region_share["sales"].sum()), 1)
+    region_forecasts = [{"region": row.region, "predicted_revenue": round(revenue_prediction * row.share, 2), "share_percent": round(row.share * 100, 2)} for row in region_share.itertuples()]
+    categories = frame.groupby("category", as_index=False).agg(sales=("sales", "sum"), units=("quantity", "sum")).sort_values("sales", ascending=False)
+    category_insights = [{"category": row.category, "sales": round(row.sales, 2), "units": round(row.units, 2), "revenue_share": round(row.sales / max(float(categories["sales"].sum()), 1) * 100, 2)} for row in categories.itertuples()]
+    anomalies = detect_anomalies(db, dataset_id)
+    seasonal = seasonal_trends(db, dataset_id)
+    high_risks = [item["product"] for item in inventory if item["risk"] == "high"]
+    strongest_region = region_forecasts[0]["region"] if region_forecasts else "N/A"
+    leading_category = category_insights[0]["category"] if category_insights else "N/A"
+    insights = [
+        f"Projected revenue is ${revenue_prediction:,.2f} based on {predicted_units:,.0f} predicted units.",
+        f"{strongest_region} contributes the strongest regional revenue outlook; {leading_category} leads category sales.",
+        f"{len(anomalies)} unusual sales movements require review before the next replenishment cycle.",
+    ]
+    if high_risks:
+        insights.append(f"Inventory risk is elevated for {', '.join(high_risks[:3])}; consider replenishment planning.")
+    return {
+        "revenue_prediction": revenue_prediction,
+        "predicted_units": predicted_units,
+        "inventory_risk": inventory,
+        "region_forecasts": region_forecasts,
+        "category_insights": category_insights,
+        "seasonal_trends": seasonal,
+        "anomalies": anomalies,
+        "generated_insights": insights,
+        "last_refreshed": datetime.utcnow(),
+    }
+
+
+def automatically_retrain(db: Session, dataset_id: int, user_id: int, periods: int = 6) -> RetrainingJob:
+    previous = db.query(ForecastRun).filter(ForecastRun.dataset_id == dataset_id).order_by(ForecastRun.created_at.desc()).first()
+    comparison = compare_models(db, dataset_id)
+    if not comparison:
+        raise HTTPException(status_code=400, detail="Dataset has no training data")
+    selected = comparison[0]["model_name"]
+    run = train_and_forecast(db, dataset_id, periods, selected)
+    job = RetrainingJob(
+        dataset_id=dataset_id,
+        requested_by=user_id,
+        selected_model=selected,
+        previous_accuracy=previous.accuracy if previous else 0,
+        new_accuracy=run.accuracy,
+        status="completed",
+    )
+    db.add(job)
+    db.flush()
+    return job
 
 
 def build_excel_report(db: Session, dataset: Dataset) -> BytesIO:

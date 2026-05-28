@@ -47,6 +47,12 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin role required")
+    if current_user.role not in {"admin", "super_admin"}:
+        raise HTTPException(status_code=403, detail="Super Admin role required")
+    return current_user
+
+
+def require_analyst(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role not in {"admin", "super_admin", "analyst"}:
+        raise HTTPException(status_code=403, detail="Analyst role required")
     return current_user

@@ -1,13 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import api from "./api/client";
 import Layout from "./components/Layout";
 import { useAuth } from "./state/AuthContext";
-import AdminPage from "./views/AdminPage";
 import AuthPage from "./views/AuthPage";
-import DashboardPage from "./views/DashboardPage";
-import ForecastPage from "./views/ForecastPage";
-import ReportsPage from "./views/ReportsPage";
-import UploadPage from "./views/UploadPage";
+
+const AdminPage = lazy(() => import("./views/AdminPage"));
+const DashboardPage = lazy(() => import("./views/DashboardPage"));
+const ForecastPage = lazy(() => import("./views/ForecastPage"));
+const InsightsPage = lazy(() => import("./views/InsightsPage"));
+const ReportsPage = lazy(() => import("./views/ReportsPage"));
+const UploadPage = lazy(() => import("./views/UploadPage"));
 
 export default function App() {
   const { user } = useAuth();
@@ -19,6 +21,10 @@ export default function App() {
   const [filters, setFilters] = useState({ start_date: "", end_date: "", category: "", region: "" });
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [advancedAnalytics, setAdvancedAnalytics] = useState(null);
+  const [liveSnapshot, setLiveSnapshot] = useState(null);
+  const [liveMode, setLiveMode] = useState(true);
+  const [autoForecast, setAutoForecast] = useState(false);
 
   const loadDatasets = useCallback(async () => {
     const { data } = await api.get("/datasets?page_size=100&sort_by=created_at&sort_dir=desc");
@@ -40,8 +46,14 @@ export default function App() {
     try {
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([key, value]) => value && params.set(key, value));
-      const { data } = await api.get(`/analytics/${selectedDatasetId}?${params.toString()}`);
-      setAnalytics(data);
+      const [basic, advanced, live] = await Promise.all([
+        api.get(`/analytics/${selectedDatasetId}?${params.toString()}`),
+        api.get(`/analytics/${selectedDatasetId}/advanced`),
+        api.get(`/realtime/${selectedDatasetId}/snapshot`)
+      ]);
+      setAnalytics(basic.data);
+      setAdvancedAnalytics(advanced.data);
+      setLiveSnapshot(live.data);
     } finally {
       setLoading(false);
     }
@@ -68,28 +80,57 @@ export default function App() {
     if (user) loadAnalytics();
   }, [user, loadAnalytics]);
 
+  useEffect(() => {
+    if (!user || !selectedDatasetId || !liveMode) return undefined;
+    const timer = setInterval(() => {
+      loadAnalytics();
+      loadNotifications();
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [user, selectedDatasetId, liveMode, loadAnalytics, loadNotifications]);
+
+  useEffect(() => {
+    if (!user || user.role === "viewer" || !selectedDatasetId || !autoForecast) return undefined;
+    const timer = setInterval(async () => {
+      await api.post(`/realtime/${selectedDatasetId}/auto-refresh?periods=6`);
+      await loadAnalytics();
+      await loadNotifications();
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [user, selectedDatasetId, autoForecast, loadAnalytics, loadNotifications]);
+
   const common = useMemo(() => ({
     datasets,
     selectedDatasetId,
     setSelectedDatasetId,
     analytics,
+    advancedAnalytics,
+    liveSnapshot,
+    liveMode,
+    setLiveMode,
+    autoForecast,
+    setAutoForecast,
+    canOperate: user?.role !== "viewer",
     loading,
     refresh: async () => {
       await loadDatasets();
       await loadAnalytics();
       await loadNotifications();
     }
-  }), [datasets, selectedDatasetId, analytics, loading, loadDatasets, loadAnalytics, loadNotifications]);
+  }), [datasets, selectedDatasetId, analytics, advancedAnalytics, liveSnapshot, liveMode, autoForecast, loading, user?.role, loadDatasets, loadAnalytics, loadNotifications]);
 
   if (!user) return <AuthPage />;
 
   return (
     <Layout activePage={activePage} setActivePage={setActivePage} notifications={notifications} refreshNotifications={loadNotifications}>
-      {activePage === "dashboard" && <DashboardPage {...common} filters={filters} setFilters={setFilters} datasetFilters={datasetFilters} />}
-      {activePage === "upload" && <UploadPage onUploaded={async (id) => { setSelectedDatasetId(String(id)); await common.refresh(); setActivePage("forecast"); }} />}
-      {activePage === "forecast" && <ForecastPage {...common} />}
-      {activePage === "reports" && <ReportsPage {...common} />}
-      {activePage === "admin" && <AdminPage />}
+      <Suspense fallback={<div className="panel animate-pulse">Loading workspace module...</div>}>
+        {activePage === "dashboard" && <DashboardPage {...common} filters={filters} setFilters={setFilters} datasetFilters={datasetFilters} onNavigate={setActivePage} />}
+        {activePage === "insights" && <InsightsPage {...common} />}
+        {activePage === "upload" && <UploadPage onUploaded={async (id) => { setSelectedDatasetId(String(id)); await common.refresh(); setActivePage("forecast"); }} />}
+        {activePage === "forecast" && <ForecastPage {...common} />}
+        {activePage === "reports" && <ReportsPage {...common} />}
+        {activePage === "admin" && <AdminPage />}
+      </Suspense>
     </Layout>
   );
 }
