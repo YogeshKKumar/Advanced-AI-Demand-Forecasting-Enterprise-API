@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -20,7 +20,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .models import ActivityLog, Dataset, ForecastResult, ForecastRun, ModelMetric, Notification, RetrainingJob, SalesRecord, User
+from .models import ActivityLog, AlertRule, DashboardWidget, Dataset, ForecastResult, ForecastRun, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ReportJob, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription
 
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
 
@@ -419,3 +419,142 @@ def build_pdf_report(db: Session, dataset: Dataset) -> BytesIO:
     doc.build(story)
     output.seek(0)
     return output
+
+
+def _records_frame(db: Session, dataset_id: int) -> pd.DataFrame:
+    rows = db.query(SalesRecord).filter(SalesRecord.dataset_id == dataset_id).order_by(SalesRecord.date).all()
+    return pd.DataFrame([{"date": row.date, "product": row.product, "category": row.category, "region": row.region, "quantity": row.quantity, "sales": row.sales} for row in rows])
+
+
+def product_recommendations(db: Session, dataset_id: int) -> List[Dict[str, Any]]:
+    frame = _records_frame(db, dataset_id)
+    if frame.empty:
+        return []
+    grouped = frame.groupby(["product", "category"], as_index=False).agg(units=("quantity", "sum"), revenue=("sales", "sum"))
+    total_revenue = max(float(grouped["revenue"].sum()), 1)
+    grouped["score"] = ((grouped["revenue"] / total_revenue) * 65 + (grouped["units"] / max(float(grouped["units"].max()), 1)) * 35).round(2)
+    return [{"product": row.product, "category": row.category, "score": row.score, "recommendation": "prioritize replenishment" if row.score >= 70 else "monitor demand"} for row in grouped.sort_values("score", ascending=False).head(10).itertuples()]
+
+
+def customer_behavior_analysis(db: Session, dataset_id: int) -> List[Dict[str, Any]]:
+    frame = _records_frame(db, dataset_id)
+    if frame.empty:
+        return []
+    frame["date"] = pd.to_datetime(frame["date"])
+    frame["month"] = frame["date"].dt.strftime("%b %Y")
+    rows = frame.groupby(["region", "category"], as_index=False).agg(units=("quantity", "sum"), revenue=("sales", "sum"))
+    total = max(float(rows["revenue"].sum()), 1)
+    return [{"segment": f"{row.region} / {row.category}", "units": round(row.units, 2), "revenue": round(row.revenue, 2), "share_percent": round(row.revenue / total * 100, 2)} for row in rows.sort_values("revenue", ascending=False).head(12).itertuples()]
+
+
+def demand_spike_predictions(db: Session, dataset_id: int) -> List[Dict[str, Any]]:
+    frame = _records_frame(db, dataset_id)
+    if frame.empty:
+        return []
+    frame["date"] = pd.to_datetime(frame["date"])
+    findings = []
+    for product, product_frame in frame.groupby("product"):
+        monthly = product_frame.set_index("date")["quantity"].resample("MS").sum().reset_index()
+        if len(monthly) < 3:
+            continue
+        recent = float(monthly["quantity"].tail(2).mean())
+        baseline = max(float(monthly["quantity"].iloc[:-2].mean()), 1)
+        lift = round((recent - baseline) / baseline * 100, 2)
+        if lift > 15:
+            findings.append({"product": product, "spike_probability": min(99, round(55 + lift / 2, 2)), "trend_lift_percent": lift, "recommended_action": "prepare safety stock"})
+    return sorted(findings, key=lambda item: item["spike_probability"], reverse=True)[:10]
+
+
+def low_stock_predictions(db: Session, dataset_id: int) -> List[Dict[str, Any]]:
+    analytics = advanced_analytics_payload(db, dataset_id)
+    return [{"product": item["product"], "risk": item["risk"], "coverage_ratio": item["coverage_ratio"], "forecast_units": item["forecast_units"], "suggested_reorder_units": max(0, round(item["forecast_units"] * 0.25 - item["available_baseline"], 2))} for item in analytics["inventory_risk"] if item["risk"] in {"high", "medium"}]
+
+
+def inventory_optimization_suggestions(db: Session, dataset_id: int) -> List[Dict[str, Any]]:
+    risks = low_stock_predictions(db, dataset_id)
+    spikes = {item["product"]: item for item in demand_spike_predictions(db, dataset_id)}
+    suggestions = []
+    for item in risks:
+        urgency = "critical" if item["risk"] == "high" or item["product"] in spikes else "planned"
+        suggestions.append({"product": item["product"], "urgency": urgency, "suggested_units": item["suggested_reorder_units"], "reason": "low coverage and rising demand" if item["product"] in spikes else "forecast coverage below target"})
+    return suggestions
+
+
+def enterprise_ai_insights(db: Session, dataset_id: int) -> Dict[str, Any]:
+    return {
+        "recommendations": product_recommendations(db, dataset_id),
+        "customer_behavior": customer_behavior_analysis(db, dataset_id),
+        "demand_spikes": demand_spike_predictions(db, dataset_id),
+        "low_stock_predictions": low_stock_predictions(db, dataset_id),
+        "inventory_optimizations": inventory_optimization_suggestions(db, dataset_id),
+        "generated_at": datetime.utcnow(),
+    }
+
+
+def forecast_trend_payload(db: Session, dataset_id: int) -> Dict[str, Any]:
+    runs = db.query(ForecastRun).filter(ForecastRun.dataset_id == dataset_id).order_by(ForecastRun.created_at.asc()).all()
+    accuracy = [{"run_id": run.id, "model_name": run.model_name, "accuracy": run.accuracy, "created_at": run.created_at} for run in runs]
+    confidence = [{"run_id": run.id, "model_name": run.model_name, "confidence_score": run.confidence_score, "created_at": run.created_at} for run in runs]
+    latest_by_model: Dict[str, ForecastRun] = {}
+    for run in runs:
+        latest_by_model[run.model_name] = run
+    historical = [{"model_name": model, "accuracy": run.accuracy, "confidence_score": run.confidence_score, "predictions": run.total_predictions} for model, run in latest_by_model.items()]
+    recommendations = []
+    if historical:
+        best = sorted(historical, key=lambda item: item["accuracy"], reverse=True)[0]
+        recommendations.append(f"{best['model_name']} is currently the strongest model at {best['accuracy']}% accuracy.")
+    low_confidence = [item for item in confidence[-5:] if item["confidence_score"] < 70]
+    if low_confidence:
+        recommendations.append("Recent confidence is below target; retrain with updated sales data before operational use.")
+    if not recommendations:
+        recommendations.append("Forecast accuracy and confidence are stable across recent runs.")
+    return {"accuracy_trends": accuracy, "historical_comparison": historical, "confidence_scores": confidence, "recommendations": recommendations}
+
+
+def create_default_widgets(db: Session, user_id: int) -> None:
+    if db.query(DashboardWidget).filter(DashboardWidget.user_id == user_id).count():
+        return
+    defaults = [
+        ("sales_kpi", "Sales KPI", 1),
+        ("forecast_accuracy", "Forecast Accuracy", 2),
+        ("inventory_risk", "Inventory Risk", 3),
+        ("model_comparison", "Model Comparison", 4),
+    ]
+    for key, title, position in defaults:
+        db.add(DashboardWidget(user_id=user_id, widget_key=key, title=title, position=position))
+
+
+def evaluate_alert_rules(db: Session, user_id: int, dataset_id: int) -> List[Notification]:
+    latest = db.query(ForecastRun).filter(ForecastRun.dataset_id == dataset_id).order_by(ForecastRun.created_at.desc()).first()
+    rules = db.query(AlertRule).filter(AlertRule.user_id == user_id, AlertRule.is_active.is_(True)).filter((AlertRule.dataset_id == dataset_id) | (AlertRule.dataset_id.is_(None))).all()
+    triggered = []
+    for rule in rules:
+        value = getattr(latest, rule.metric, None) if latest else None
+        if value is None:
+            continue
+        expr = f"{float(value)} {rule.operator} {float(rule.threshold)}"
+        if eval(expr, {"__builtins__": {}}, {}):
+            triggered.append(notify(db, user_id, f"Alert: {rule.name}", f"{rule.metric} is {value}, threshold {rule.operator} {rule.threshold}.", "warning"))
+    return triggered
+
+
+def run_due_forecast_schedules(db: Session) -> List[Dict[str, Any]]:
+    due = db.query(ForecastSchedule).filter(ForecastSchedule.is_active.is_(True), ForecastSchedule.next_run_at <= datetime.utcnow()).limit(10).all()
+    executed = []
+    for schedule in due:
+        try:
+            run = train_and_forecast(db, schedule.dataset_id, schedule.periods, schedule.model_name)
+            schedule.last_run_at = datetime.utcnow()
+            schedule.next_run_at = schedule.last_run_at + pd.Timedelta(minutes=schedule.interval_minutes).to_pytimedelta()
+            notify(db, schedule.created_by, "Scheduled forecast completed", f"{schedule.name} created {run.total_predictions} predictions.", "success")
+            log_activity(db, schedule.created_by, "automation.forecast.completed", "dataset", schedule.dataset_id, {"schedule_id": schedule.id, "run_id": run.id})
+            if run.accuracy < schedule.alert_threshold:
+                notify(db, schedule.created_by, "Forecast accuracy alert", f"{run.model_name} accuracy is {run.accuracy}%, below {schedule.alert_threshold}%.", "warning")
+            evaluate_alert_rules(db, schedule.created_by, schedule.dataset_id)
+            executed.append({"schedule_id": schedule.id, "status": "completed", "run_id": run.id})
+        except Exception as exc:
+            notify(db, schedule.created_by, "Scheduled forecast failed", str(exc), "error")
+            log_activity(db, schedule.created_by, "automation.forecast.failed", "dataset", schedule.dataset_id, {"schedule_id": schedule.id, "error": str(exc)})
+            executed.append({"schedule_id": schedule.id, "status": "failed", "error": str(exc)})
+    db.flush()
+    return executed

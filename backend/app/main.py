@@ -1,9 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
+
+from collections import defaultdict, deque
 
 from io import BytesIO
 from datetime import datetime, timedelta
 from math import ceil
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import List, Optional
 
 import pandas as pd
@@ -16,7 +18,7 @@ from sqlalchemy.orm import Session
 from .auth import create_access_token, get_current_user, hash_password, require_admin, require_analyst, verify_password
 from .cache import dashboard_cache
 from .database import Base, SessionLocal, engine, get_db
-from .models import ApiMetric, ActivityLog, Dataset, ForecastRun, ModelMetric, Notification, RetrainingJob, SalesRecord, User
+from .models import AlertRule, ApiMetric, ActivityLog, DashboardWidget, Dataset, ForecastRun, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ReportJob, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription
 from .schemas import (
     ActivityOut,
     AdminSummary,
@@ -41,6 +43,23 @@ from .schemas import (
     UserCreate,
     UserLogin,
     UserOut,
+    AlertRuleIn,
+    AlertRuleOut,
+    DashboardSummaryOut,
+    DashboardWidgetIn,
+    DashboardWidgetOut,
+    EnterpriseInsightsOut,
+    ForecastScheduleIn,
+    ForecastScheduleOut,
+    ForecastTrendOut,
+    IntegrationIn,
+    IntegrationOut,
+    PasswordResetConfirmIn,
+    PasswordResetRequestIn,
+    ProfileUpdateIn,
+    UserProfileOut,
+    WebhookIn,
+    WebhookOut,
 )
 from .services import (
     SUPPORTED_MODELS,
@@ -59,6 +78,11 @@ from .services import (
     realtime_snapshot,
     seasonal_trends,
     train_and_forecast,
+    create_default_widgets,
+    enterprise_ai_insights,
+    evaluate_alert_rules,
+    forecast_trend_payload,
+    run_due_forecast_schedules,
 )
 from .settings import settings
 
@@ -110,6 +134,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_rate_windows = defaultdict(deque)
+
+
+@app.middleware("http")
+async def api_rate_limiter(request: Request, call_next):
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    client = request.client.host if request.client else "unknown"
+    key = f"{client}:{request.url.path.split('/')[2] if len(request.url.path.split('/')) > 2 else 'api'}"
+    now = monotonic()
+    window = _rate_windows[key]
+    while window and now - window[0] > settings.rate_limit_window_seconds:
+        window.popleft()
+    if len(window) >= settings.rate_limit_requests:
+        return JSONResponse(status_code=429, content={"success": False, "error": "Rate limit exceeded", "status_code": 429})
+    window.append(now)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -212,6 +254,8 @@ async def upload_dataset(
     db: Session = Depends(get_db),
 ):
     content = await file.read()
+    if len(content) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File exceeds {settings.max_upload_mb} MB limit")
     try:
         if not file.filename:
             raise ValueError("File name is required")
@@ -394,7 +438,7 @@ async def global_search(q: str = Query(..., min_length=1), current_user: User = 
 @app.get("/api/activity", response_model=List[ActivityOut], tags=["Analytics"], summary="Recent activity logs")
 async def activities(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     query = db.query(ActivityLog)
-    if current_user.role != "admin":
+    if current_user.role not in {"admin", "super_admin"}:
         query = query.filter(ActivityLog.user_id == current_user.id)
     items = query.order_by(ActivityLog.created_at.desc()).limit(40).all()
     return [{"id": item.id, "action": item.action, "entity_type": item.entity_type, "entity_id": item.entity_id, "metadata": __import__("json").loads(item.metadata_json), "created_at": item.created_at} for item in items]
@@ -527,3 +571,214 @@ async def admin_datasets(page: int = 1, page_size: int = 20, search: str = "", _
     return {"items": [{"id": dataset.id, "name": dataset.name, "row_count": dataset.row_count, "status": dataset.status, "owner": user.email, "created_at": dataset.created_at} for dataset, user in rows], "total": total, "page": page, "page_size": page_size}
     MonitoringOut,
     detect_anomalies,
+
+
+@app.get("/api/profile", response_model=UserProfileOut, tags=["Authentication"], summary="Extended user profile")
+async def profile(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile_row = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first()
+    if not profile_row:
+        profile_row = UserProfile(user_id=current_user.id)
+        db.add(profile_row)
+        db.commit()
+        db.refresh(profile_row)
+    return {"user": current_user, "title": profile_row.title, "department": profile_row.department, "phone": profile_row.phone, "preferences": __import__("json").loads(profile_row.preferences_json or "{}")}
+
+
+@app.patch("/api/profile", response_model=UserProfileOut, tags=["Authentication"], summary="Update user profile")
+async def update_profile(payload: ProfileUpdateIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile_row = db.query(UserProfile).filter(UserProfile.user_id == current_user.id).first() or UserProfile(user_id=current_user.id)
+    if payload.name:
+        current_user.name = payload.name
+    profile_row.title = payload.title
+    profile_row.department = payload.department
+    profile_row.phone = payload.phone
+    profile_row.preferences_json = __import__("json").dumps(payload.preferences)
+    db.add(profile_row)
+    log_activity(db, current_user.id, "user.profile.updated", "user", current_user.id)
+    db.commit()
+    db.refresh(profile_row)
+    return {"user": current_user, "title": profile_row.title, "department": profile_row.department, "phone": profile_row.phone, "preferences": payload.preferences}
+
+
+@app.post("/api/auth/password-reset/request", tags=["Authentication"], summary="Create password reset token")
+async def request_password_reset(payload: PasswordResetRequestIn, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == payload.email).first()
+    if user:
+        token = __import__("secrets").token_urlsafe(24)
+        db.add(PasswordResetToken(user_id=user.id, token=token, expires_at=datetime.utcnow() + timedelta(hours=2)))
+        notify(db, user.id, "Password reset requested", f"Use reset token: {token}", "info")
+        log_activity(db, user.id, "user.password_reset.requested", "user", user.id)
+        db.commit()
+    return {"success": True, "message": "If the email exists, a reset token was generated."}
+
+
+@app.post("/api/auth/password-reset/confirm", tags=["Authentication"], summary="Reset password with token")
+async def confirm_password_reset(payload: PasswordResetConfirmIn, db: Session = Depends(get_db)):
+    reset = db.query(PasswordResetToken).filter(PasswordResetToken.token == payload.token, PasswordResetToken.used_at.is_(None), PasswordResetToken.expires_at >= datetime.utcnow()).first()
+    if not reset:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    user = db.query(User).filter(User.id == reset.user_id).first()
+    user.hashed_password = hash_password(payload.new_password)
+    reset.used_at = datetime.utcnow()
+    log_activity(db, user.id, "user.password_reset.completed", "user", user.id)
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/api/automation/schedules", response_model=List[ForecastScheduleOut], tags=["Automation"], summary="List automated forecast schedules")
+async def list_schedules(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    query = db.query(ForecastSchedule)
+    if current_user.role not in {"admin", "super_admin"}:
+        query = query.filter(ForecastSchedule.created_by == current_user.id)
+    return query.order_by(ForecastSchedule.created_at.desc()).all()
+
+
+@app.post("/api/automation/schedules", response_model=ForecastScheduleOut, tags=["Automation"], summary="Create recurring forecast schedule")
+async def create_schedule(payload: ForecastScheduleIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_user_dataset(db, payload.dataset_id, current_user)
+    schedule = ForecastSchedule(**payload.model_dump(), created_by=current_user.id, next_run_at=datetime.utcnow() + timedelta(minutes=payload.interval_minutes))
+    db.add(schedule)
+    log_activity(db, current_user.id, "automation.schedule.created", "dataset", payload.dataset_id, {"interval_minutes": payload.interval_minutes})
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+@app.post("/api/automation/run-due", tags=["Automation"], summary="Execute due automated forecasts")
+async def run_due_schedules(current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    executed = run_due_forecast_schedules(db)
+    db.commit()
+    return {"executed": executed, "count": len(executed)}
+
+
+@app.get("/api/integrations", response_model=List[IntegrationOut], tags=["Integrations"], summary="List enterprise integrations")
+async def list_integrations(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rows = db.query(Integration).order_by(Integration.created_at.desc()).all()
+    return [{"id": row.id, "name": row.name, "provider": row.provider, "base_url": row.base_url, "auth_type": row.auth_type, "status": row.status, "settings": __import__("json").loads(row.settings_json or "{}"), "created_at": row.created_at} for row in rows]
+
+
+@app.post("/api/integrations", response_model=IntegrationOut, tags=["Integrations"], summary="Create ERP, inventory, or external API integration")
+async def create_integration(payload: IntegrationIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = Integration(name=payload.name, provider=payload.provider, base_url=payload.base_url, auth_type=payload.auth_type, secret_ref=payload.secret_ref, status="active", settings_json=__import__("json").dumps(payload.settings), created_by=current_user.id)
+    db.add(row)
+    log_activity(db, current_user.id, "integration.created", "integration", None, {"provider": payload.provider})
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name, "provider": row.provider, "base_url": row.base_url, "auth_type": row.auth_type, "status": row.status, "settings": payload.settings, "created_at": row.created_at}
+
+
+@app.post("/api/integrations/{integration_id}/test", tags=["Integrations"], summary="Validate integration configuration")
+async def test_integration(integration_id: int, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = db.query(Integration).filter(Integration.id == integration_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    row.status = "verified" if row.base_url else "needs_configuration"
+    log_activity(db, current_user.id, "integration.tested", "integration", integration_id, {"status": row.status})
+    db.commit()
+    return {"success": row.status == "verified", "status": row.status, "message": "Configuration accepted for managed connector."}
+
+
+@app.get("/api/webhooks", response_model=List[WebhookOut], tags=["Integrations"], summary="List real-time webhook subscriptions")
+async def list_webhooks(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return db.query(WebhookSubscription).order_by(WebhookSubscription.created_at.desc()).all()
+
+
+@app.post("/api/webhooks", response_model=WebhookOut, tags=["Integrations"], summary="Create webhook subscription")
+async def create_webhook(payload: WebhookIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    row = WebhookSubscription(**payload.model_dump(), created_by=current_user.id)
+    db.add(row)
+    log_activity(db, current_user.id, "webhook.created", "webhook", None, {"event_type": payload.event_type})
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.get("/api/ai/{dataset_id}/enterprise-insights", response_model=EnterpriseInsightsOut, tags=["Optimization"], summary="Product recommendations, customer behavior, spikes, and inventory optimization")
+async def enterprise_insights(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    return enterprise_ai_insights(db, dataset_id)
+
+
+@app.get("/api/forecast/{dataset_id}/insights", response_model=ForecastTrendOut, tags=["Forecasting"], summary="Accuracy trends, confidence history, and business recommendations")
+async def forecast_insights(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    return forecast_trend_payload(db, dataset_id)
+
+
+@app.get("/api/dashboard/widgets", response_model=List[DashboardWidgetOut], tags=["Analytics"], summary="User dashboard widgets")
+async def dashboard_widgets(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    create_default_widgets(db, current_user.id)
+    db.commit()
+    rows = db.query(DashboardWidget).filter(DashboardWidget.user_id == current_user.id).order_by(DashboardWidget.position).all()
+    return [{"id": row.id, "user_id": row.user_id, "widget_key": row.widget_key, "title": row.title, "position": row.position, "is_visible": row.is_visible, "settings": __import__("json").loads(row.settings_json or "{}")} for row in rows]
+
+
+@app.post("/api/dashboard/widgets", response_model=DashboardWidgetOut, tags=["Analytics"], summary="Create or update dashboard widget")
+async def upsert_dashboard_widget(payload: DashboardWidgetIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.query(DashboardWidget).filter(DashboardWidget.user_id == current_user.id, DashboardWidget.widget_key == payload.widget_key).first()
+    if not row:
+        row = DashboardWidget(user_id=current_user.id, widget_key=payload.widget_key)
+    row.title = payload.title
+    row.position = payload.position
+    row.is_visible = payload.is_visible
+    row.settings_json = __import__("json").dumps(payload.settings)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "user_id": row.user_id, "widget_key": row.widget_key, "title": row.title, "position": row.position, "is_visible": row.is_visible, "settings": payload.settings}
+
+
+@app.get("/api/dashboard/{dataset_id}/summary", response_model=DashboardSummaryOut, tags=["Analytics"], summary="Downloadable dashboard summary payload")
+async def dashboard_summary(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    analytics_data = analytics_payload(db, dataset_id, None, None, "", "")
+    advanced = advanced_analytics_payload(db, dataset_id)
+    return {"dataset_id": dataset_id, "generated_at": datetime.utcnow(), "kpis": {"total_sales": analytics_data["total_sales"], "total_units": analytics_data["total_units"], "accuracy": analytics_data["forecast_accuracy"], "confidence": analytics_data["confidence_score"]}, "insights": advanced["generated_insights"]}
+
+
+@app.get("/api/dashboard/{dataset_id}/summary.csv", tags=["Analytics"], summary="Download dashboard summary CSV")
+async def dashboard_summary_csv(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    summary = await dashboard_summary(dataset_id, current_user, db)
+    output = BytesIO()
+    pd.DataFrame([summary["kpis"]]).to_csv(output, index=False)
+    output.seek(0)
+    return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=dashboard-summary.csv"})
+
+
+@app.get("/api/alerts/rules", response_model=List[AlertRuleOut], tags=["Notifications"], summary="List configurable alert rules")
+async def list_alert_rules(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(AlertRule).filter(AlertRule.user_id == current_user.id).order_by(AlertRule.created_at.desc()).all()
+
+
+@app.post("/api/alerts/rules", response_model=AlertRuleOut, tags=["Notifications"], summary="Create threshold-based alert rule")
+async def create_alert_rule(payload: AlertRuleIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if payload.dataset_id:
+        get_user_dataset(db, payload.dataset_id, current_user)
+    row = AlertRule(**payload.model_dump(), user_id=current_user.id)
+    db.add(row)
+    log_activity(db, current_user.id, "alert.rule.created", "alert", None, {"metric": payload.metric, "threshold": payload.threshold})
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.post("/api/alerts/evaluate/{dataset_id}", tags=["Notifications"], summary="Evaluate alert rules for a dataset")
+async def evaluate_alerts(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    triggered = evaluate_alert_rules(db, current_user.id, dataset_id)
+    db.commit()
+    return {"triggered": len(triggered)}
+
+
+@app.patch("/api/admin/users/{user_id}/status", response_model=UserOut, tags=["Admin"], summary="Enable or disable user account")
+async def update_user_status(user_id: int, is_active: bool, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id and not is_active:
+        raise HTTPException(status_code=400, detail="You cannot disable your own account")
+    user.is_active = is_active
+    log_activity(db, current_user.id, "user.status.updated", "user", user.id, {"is_active": is_active})
+    db.commit()
+    db.refresh(user)
+    return user

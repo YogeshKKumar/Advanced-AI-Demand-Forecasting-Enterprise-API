@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { Download, FileSpreadsheet, FileText, GitCompareArrows, Sparkles } from "lucide-react";
 import api from "../api/client";
 import DatasetPicker from "../components/DatasetPicker";
@@ -71,3 +71,5 @@ export default function ReportsPage({ datasets, selectedDatasetId, setSelectedDa
 function Preview({ label, value }) {
   return <div className="rounded-lg bg-slate-100 p-4 dark:bg-white/10"><p className="text-sm text-slate-500">{label}</p><p className="mt-1 text-2xl font-black">{value}</p></div>;
 }
+
+

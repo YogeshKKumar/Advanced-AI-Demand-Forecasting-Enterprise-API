@@ -1,10 +1,13 @@
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+﻿import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import api from "./api/client";
 import Layout from "./components/Layout";
 import { useAuth } from "./state/AuthContext";
 import AuthPage from "./views/AuthPage";
 
 const AdminPage = lazy(() => import("./views/AdminPage"));
+const AutomationPage = lazy(() => import("./views/AutomationPage"));
+const IntegrationsPage = lazy(() => import("./views/IntegrationsPage"));
+const SettingsPage = lazy(() => import("./views/SettingsPage"));
 const DashboardPage = lazy(() => import("./views/DashboardPage"));
 const ForecastPage = lazy(() => import("./views/ForecastPage"));
 const InsightsPage = lazy(() => import("./views/InsightsPage"));
@@ -129,8 +132,14 @@ export default function App() {
         {activePage === "upload" && <UploadPage onUploaded={async (id) => { setSelectedDatasetId(String(id)); await common.refresh(); setActivePage("forecast"); }} />}
         {activePage === "forecast" && <ForecastPage {...common} />}
         {activePage === "reports" && <ReportsPage {...common} />}
+        {activePage === "automation" && <AutomationPage {...common} />}
+        {activePage === "integrations" && <IntegrationsPage {...common} />}
+        {activePage === "settings" && <SettingsPage {...common} />}
         {activePage === "admin" && <AdminPage />}
       </Suspense>
     </Layout>
   );
 }
+
+
+

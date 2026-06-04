@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowUpRight, Boxes, MapPinned, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import api from "../api/client";
 import DatasetPicker from "../components/DatasetPicker";
 import MetricCard from "../components/MetricCard";
 import Skeleton from "../components/Skeleton";
@@ -10,10 +11,16 @@ const riskColors = { high: "#ef4444", medium: "#f59e0b", low: "#14b8a6" };
 export default function InsightsPage({ datasets, selectedDatasetId, setSelectedDatasetId, advancedAnalytics, liveSnapshot, loading, refresh }) {
   const [riskFilter, setRiskFilter] = useState("all");
   const [regionSort, setRegionSort] = useState("revenue");
+  const [enterpriseInsights, setEnterpriseInsights] = useState(null);
   const risks = useMemo(() => {
     const items = advancedAnalytics?.inventory_risk || [];
     return riskFilter === "all" ? items : items.filter((item) => item.risk === riskFilter);
   }, [advancedAnalytics, riskFilter]);
+  useEffect(() => {
+    if (!selectedDatasetId) return;
+    api.get(`/ai/${selectedDatasetId}/enterprise-insights`).then(({ data }) => setEnterpriseInsights(data));
+  }, [selectedDatasetId]);
+
   const regions = useMemo(() => {
     const items = [...(advancedAnalytics?.region_forecasts || [])];
     return items.sort((a, b) => regionSort === "share" ? b.share_percent - a.share_percent : b.predicted_revenue - a.predicted_revenue);
@@ -38,6 +45,7 @@ export default function InsightsPage({ datasets, selectedDatasetId, setSelectedD
             <MetricCard icon={AlertTriangle} label="Signals Found" value={advancedAnalytics.anomalies.length} trend="Anomalies flagged" tone="amber" />
             <MetricCard icon={MapPinned} label="Sales Window" value={`$${Number(liveSnapshot?.rolling_sales || 0).toLocaleString()}`} trend="Recent live sales" />
           </div>
+                    {enterpriseInsights && <section className="panel"><h3 className="mb-4 text-lg font-black">Advanced AI recommendations</h3><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4"><MiniList title="Products" rows={enterpriseInsights.recommendations.map((item) => `${item.product}: ${item.score}`)} /><MiniList title="Buying behavior" rows={enterpriseInsights.customer_behavior.map((item) => `${item.segment}: ${item.share_percent}%`)} /><MiniList title="Demand spikes" rows={enterpriseInsights.demand_spikes.map((item) => `${item.product}: ${item.spike_probability}%`)} /><MiniList title="Inventory actions" rows={enterpriseInsights.inventory_optimizations.map((item) => `${item.product}: ${item.urgency}`)} /></div></section>}
           <section className="insight-hero">
             <div className="flex items-center gap-2"><Sparkles size={20}/><h3 className="text-lg font-black">Executive AI Brief</h3></div>
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -75,3 +83,9 @@ export default function InsightsPage({ datasets, selectedDatasetId, setSelectedD
     </div>
   );
 }
+
+function MiniList({ title, rows }) {
+  return <div className="mini-list"><b>{title}</b>{rows.length ? rows.slice(0, 4).map((row) => <span key={row}>{row}</span>) : <span>No signal yet</span>}</div>;
+}
+
+

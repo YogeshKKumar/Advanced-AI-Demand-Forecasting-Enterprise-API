@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import { Activity, AlertTriangle, ArrowRight, BarChart3, Boxes, DollarSign, FileDown, RefreshCw, Sparkles, Target, TrendingUp, UploadCloud } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import DatasetPicker from "../components/DatasetPicker";
@@ -97,3 +97,5 @@ function EmptyState() {
 function QuickAction({ icon: Icon, label, onClick }) {
   return <button className="quick-action" onClick={onClick}><Icon size={18}/><span>{label}</span><ArrowRight size={15}/></button>;
 }
+
+

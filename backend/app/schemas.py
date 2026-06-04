@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -232,3 +232,140 @@ class ReportSummary(BaseModel):
     latest_run: Optional[ForecastRunOut]
     metrics: List[ModelMetricOut]
     forecast: List[ForecastPoint]
+
+
+class ProfileUpdateIn(BaseModel):
+    name: Optional[str] = Field(None, min_length=2)
+    title: str = ""
+    department: str = ""
+    phone: str = ""
+    preferences: Dict[str, Any] = Field(default_factory=dict)
+
+
+class UserProfileOut(BaseModel):
+    user: UserOut
+    title: str = ""
+    department: str = ""
+    phone: str = ""
+    preferences: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PasswordResetRequestIn(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmIn(BaseModel):
+    token: str = Field(..., min_length=12)
+    new_password: str = Field(..., min_length=6)
+
+
+class ForecastScheduleIn(BaseModel):
+    dataset_id: int
+    name: str = Field(..., min_length=2)
+    model_name: str = "ensemble"
+    periods: int = Field(6, ge=1, le=36)
+    interval_minutes: int = Field(1440, ge=15, le=43200)
+    alert_threshold: float = Field(70, ge=0, le=100)
+    is_active: bool = True
+
+
+class ForecastScheduleOut(ForecastScheduleIn):
+    id: int
+    created_by: int
+    last_run_at: Optional[datetime]
+    next_run_at: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class IntegrationIn(BaseModel):
+    name: str = Field(..., min_length=2)
+    provider: str = Field(..., examples=["erp", "inventory", "external_api"])
+    base_url: str = ""
+    auth_type: str = "api_key"
+    secret_ref: str = ""
+    settings: Dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegrationOut(BaseModel):
+    id: int
+    name: str
+    provider: str
+    base_url: str
+    auth_type: str
+    status: str
+    settings: Dict[str, Any]
+    created_at: datetime
+
+
+class WebhookIn(BaseModel):
+    name: str = Field(..., min_length=2)
+    url: str = Field(..., min_length=8)
+    event_type: str = Field("forecast.completed")
+    secret: str = ""
+    is_active: bool = True
+
+
+class WebhookOut(WebhookIn):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AlertRuleIn(BaseModel):
+    dataset_id: Optional[int] = None
+    name: str = Field(..., min_length=2)
+    metric: str = Field("accuracy", pattern="^(accuracy|confidence_score|forecast_failure|low_stock)$")
+    operator: str = Field("<", pattern="^(<|>|<=|>=|==)$")
+    threshold: float = 75
+    channel: str = Field("in_app", pattern="^(in_app|email)$")
+    is_active: bool = True
+
+
+class AlertRuleOut(AlertRuleIn):
+    id: int
+    user_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DashboardWidgetIn(BaseModel):
+    widget_key: str
+    title: str
+    position: int = 0
+    is_visible: bool = True
+    settings: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardWidgetOut(DashboardWidgetIn):
+    id: int
+    user_id: int
+
+
+class EnterpriseInsightsOut(BaseModel):
+    recommendations: List[Dict[str, Any]]
+    customer_behavior: List[Dict[str, Any]]
+    demand_spikes: List[Dict[str, Any]]
+    low_stock_predictions: List[Dict[str, Any]]
+    inventory_optimizations: List[Dict[str, Any]]
+    generated_at: datetime
+
+
+class ForecastTrendOut(BaseModel):
+    accuracy_trends: List[Dict[str, Any]]
+    historical_comparison: List[Dict[str, Any]]
+    confidence_scores: List[Dict[str, Any]]
+    recommendations: List[str]
+
+
+class DashboardSummaryOut(BaseModel):
+    dataset_id: int
+    generated_at: datetime
+    kpis: Dict[str, Any]
+    insights: List[str]

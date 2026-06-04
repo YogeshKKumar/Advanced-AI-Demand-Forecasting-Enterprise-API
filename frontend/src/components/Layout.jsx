@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { BarChart3, Bell, Database, FileText, LineChart, LogOut, Moon, Search, Shield, Sparkles, Sun, UploadCloud } from "lucide-react";
+﻿import React, { useEffect, useState } from "react";
+import { BarChart3, Bell, CalendarClock, Database, FileText, LineChart, LogOut, Moon, PlugZap, Search, Settings, Shield, Sparkles, Sun, UploadCloud } from "lucide-react";
 import api from "../api/client";
 import { useAuth } from "../state/AuthContext";
 
@@ -8,7 +8,8 @@ const nav = [
   { id: "insights", label: "Intelligence", icon: Sparkles },
   { id: "upload", label: "Upload", icon: UploadCloud },
   { id: "forecast", label: "Forecast", icon: LineChart },
-  { id: "reports", label: "Reports", icon: FileText }
+  { id: "reports", label: "Reports", icon: FileText },
+  { id: "automation", label: "Automation", icon: CalendarClock }
 ];
 
 export default function Layout({ activePage, setActivePage, notifications, refreshNotifications, children }) {
@@ -19,7 +20,9 @@ export default function Layout({ activePage, setActivePage, notifications, refre
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(null);
   const editableNav = user?.role === "viewer" ? nav.filter((item) => ["dashboard", "insights", "reports"].includes(item.id)) : nav;
-  const items = ["admin", "super_admin"].includes(user?.role) ? [...editableNav, { id: "admin", label: "Admin", icon: Shield }] : editableNav;
+  const items = ["admin", "super_admin"].includes(user?.role)
+    ? [...editableNav, { id: "integrations", label: "Integrations", icon: PlugZap }, { id: "settings", label: "Settings", icon: Settings }, { id: "admin", label: "Admin", icon: Shield }]
+    : [...editableNav, { id: "settings", label: "Settings", icon: Settings }];
   const unread = notifications.filter((item) => !item.is_read).length;
 
   useEffect(() => {
@@ -130,3 +133,7 @@ function SearchGroup({ title, rows }) {
   if (!rows.length) return null;
   return <div><p className="mb-1 text-xs font-black uppercase text-slate-400">{title}</p>{rows.map((row) => <p key={row} className="rounded-md px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-white/10">{row}</p>)}</div>;
 }
+
+
+
+

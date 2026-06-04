@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { BrainCircuit, Lock, Mail, User } from "lucide-react";
 import { useAuth } from "../state/AuthContext";
 
@@ -59,3 +59,5 @@ function Field({ icon: Icon, label, value, onChange, type = "text" }) {
     </label>
   );
 }
+
+

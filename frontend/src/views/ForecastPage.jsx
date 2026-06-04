@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { BrainCircuit, GitCompareArrows, Play, RefreshCw, ShieldAlert } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import api from "../api/client";
@@ -16,21 +16,24 @@ export default function ForecastPage({ datasets, selectedDatasetId, setSelectedD
   const [seasonality, setSeasonality] = useState([]);
   const [historyFilter, setHistoryFilter] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forecastInsights, setForecastInsights] = useState(null);
 
   const load = async () => {
     const modelRes = await api.get("/forecast/models");
     setModels(modelRes.data.items || []);
     if (selectedDatasetId) {
-      const [compareRes, historyRes, anomalyRes, seasonRes] = await Promise.all([
+      const [compareRes, historyRes, anomalyRes, seasonRes, insightRes] = await Promise.all([
         api.get(`/forecast/${selectedDatasetId}/compare`),
         api.get(`/forecast/${selectedDatasetId}/history`),
         api.get(`/optimization/${selectedDatasetId}/anomalies`),
-        api.get(`/optimization/${selectedDatasetId}/seasonality`)
+        api.get(`/optimization/${selectedDatasetId}/seasonality`),
+        api.get(`/forecast/${selectedDatasetId}/insights`)
       ]);
       setComparison(compareRes.data);
       setHistory(historyRes.data);
       setAnomalies(anomalyRes.data.items || []);
       setSeasonality(seasonRes.data.items || []);
+      setForecastInsights(insightRes.data);
     }
   };
 
@@ -84,6 +87,7 @@ export default function ForecastPage({ datasets, selectedDatasetId, setSelectedD
         <section className="panel"><h3 className="mb-4 flex items-center gap-2 text-lg font-black"><ShieldAlert size={20}/> Anomaly Watch</h3>{anomalies.length === 0 ? <p className="empty">No unusual patterns detected.</p> : <div className="space-y-2">{anomalies.slice(0, 5).map((item) => <div className="risk-row" key={`${item.product}-${item.date}`}><span className={`risk-pill risk-${item.severity}`}>{item.severity}</span><b>{item.product}</b><span className="ml-auto text-sm">{item.deviation_percent}% deviation</span></div>)}</div>}</section>
         <section className="panel"><h3 className="mb-4 text-lg font-black">Seasonal Signals</h3>{seasonality.length === 0 ? <p className="empty">No seasonal trends yet.</p> : <ResponsiveContainer width="100%" height={220}><BarChart data={seasonality}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="month"/><YAxis/><Tooltip/><Bar dataKey="trend_percent" fill="#f59e0b" radius={[7,7,0,0]}/></BarChart></ResponsiveContainer>}</section>
       </div>
+            {forecastInsights && <section className="panel"><h3 className="mb-4 text-lg font-black">Accuracy and confidence recommendations</h3><div className="grid gap-3 md:grid-cols-3">{forecastInsights.recommendations.map((item) => <p className="insight-row" key={item}>{item}</p>)}</div></section>}
       <section className="panel">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><h3 className="text-lg font-black">Forecast history</h3><input className="input h-10" placeholder="Filter model history" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)} /></div>
         <div className="overflow-auto">
@@ -93,3 +97,6 @@ export default function ForecastPage({ datasets, selectedDatasetId, setSelectedD
     </div>
   );
 }
+
+
+

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+﻿from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -10,7 +10,7 @@ from .database import get_db
 from .models import User
 from .settings import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["pbkdf2_sha256", "bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 
@@ -56,3 +56,4 @@ def require_analyst(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role not in {"admin", "super_admin", "analyst"}:
         raise HTTPException(status_code=403, detail="Analyst role required")
     return current_user
+

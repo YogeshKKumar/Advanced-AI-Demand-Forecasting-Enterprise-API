@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Optional
@@ -190,4 +190,122 @@ class RetrainingJob(Base):
     previous_accuracy: Mapped[float] = mapped_column(Float, default=0)
     new_accuracy: Mapped[float] = mapped_column(Float, default=0)
     status: Mapped[str] = mapped_column(String(40), default="completed", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(120), default="")
+    department: Mapped[str] = mapped_column(String(120), default="")
+    phone: Mapped[str] = mapped_column(String(60), default="")
+    preferences_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ForecastSchedule(Base):
+    __tablename__ = "forecast_schedules"
+    __table_args__ = (Index("ix_schedules_due_active", "is_active", "next_run_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    model_name: Mapped[str] = mapped_column(String(80), default="ensemble")
+    periods: Mapped[int] = mapped_column(Integer, default=6)
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=1440)
+    alert_threshold: Mapped[float] = mapped_column(Float, default=70)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class Integration(Base):
+    __tablename__ = "integrations"
+    __table_args__ = (Index("ix_integrations_provider_status", "provider", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    base_url: Mapped[str] = mapped_column(String(500), default="")
+    auth_type: Mapped[str] = mapped_column(String(40), default="api_key")
+    secret_ref: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(40), default="draft", index=True)
+    settings_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class WebhookSubscription(Base):
+    __tablename__ = "webhook_subscriptions"
+    __table_args__ = (Index("ix_webhooks_event_active", "event_type", "is_active"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    url: Mapped[str] = mapped_column(String(500))
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    secret: Mapped[str] = mapped_column(String(255), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rules"
+    __table_args__ = (Index("ix_alert_rules_user_dataset_active", "user_id", "dataset_id", "is_active"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    dataset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("datasets.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    metric: Mapped[str] = mapped_column(String(80), default="accuracy")
+    operator: Mapped[str] = mapped_column(String(8), default="<")
+    threshold: Mapped[float] = mapped_column(Float, default=75)
+    channel: Mapped[str] = mapped_column(String(40), default="in_app")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ReportJob(Base):
+    __tablename__ = "report_jobs"
+    __table_args__ = (Index("ix_report_jobs_user_status_created", "requested_by", "status", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    requested_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    report_type: Mapped[str] = mapped_column(String(80), default="summary")
+    format: Mapped[str] = mapped_column(String(20), default="pdf")
+    status: Mapped[str] = mapped_column(String(40), default="queued", index=True)
+    file_name: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class DashboardWidget(Base):
+    __tablename__ = "dashboard_widgets"
+    __table_args__ = (Index("ix_widgets_user_position", "user_id", "position"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    widget_key: Mapped[str] = mapped_column(String(100), index=True)
+    title: Mapped[str] = mapped_column(String(160))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    settings_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (Index("ix_password_reset_user_expiry", "user_id", "expires_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

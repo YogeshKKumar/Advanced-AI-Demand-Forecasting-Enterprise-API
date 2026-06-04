@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+﻿import React, { createContext, useContext, useMemo, useState } from "react";
 import api from "../api/client";
 
 const AuthContext = createContext(null);
@@ -20,16 +20,24 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const setUserFromProfile = (nextUser) => {
+    localStorage.setItem("enterprise_user", JSON.stringify(nextUser));
+    setUser(nextUser);
+  };
+
   const logout = () => {
     localStorage.removeItem("enterprise_token");
     localStorage.removeItem("enterprise_user");
     setUser(null);
   };
 
-  const value = useMemo(() => ({ user, busy, authenticate, logout }), [user, busy]);
+  const value = useMemo(() => ({ user, busy, authenticate, logout, setUserFromProfile }), [user, busy]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
   return useContext(AuthContext);
 }
+
+
+
