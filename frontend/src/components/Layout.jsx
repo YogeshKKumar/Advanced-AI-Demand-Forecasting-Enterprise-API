@@ -1,13 +1,18 @@
 ﻿import React, { useEffect, useState } from "react";
-import { BarChart3, Bell, CalendarClock, Database, FileText, LineChart, LogOut, Moon, PlugZap, Search, Settings, Shield, Sparkles, Sun, UploadCloud } from "lucide-react";
+import { BarChart3, Bell, BriefcaseBusiness, ClipboardList, CalendarClock, Database, FileText, LineChart, LogOut, MessageSquareText, Moon, PlugZap, Search, Settings, Shield, Sparkles, Sun, Target, UploadCloud } from "lucide-react";
 import api from "../api/client";
 import { useAuth } from "../state/AuthContext";
 
 const nav = [
   { id: "dashboard", label: "Dashboard", icon: BarChart3 },
+  { id: "workspaces", label: "Workspaces", icon: BriefcaseBusiness },
+  { id: "executive", label: "Executive", icon: ClipboardList },
   { id: "insights", label: "Intelligence", icon: Sparkles },
   { id: "upload", label: "Upload", icon: UploadCloud },
   { id: "forecast", label: "Forecast", icon: LineChart },
+  { id: "scenarios", label: "Scenarios", icon: Target },
+  { id: "collaboration", label: "Collaboration", icon: MessageSquareText },
+  { id: "accuracy", label: "Accuracy", icon: BarChart3 },
   { id: "reports", label: "Reports", icon: FileText },
   { id: "automation", label: "Automation", icon: CalendarClock }
 ];
@@ -19,7 +24,7 @@ export default function Layout({ activePage, setActivePage, notifications, refre
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState(null);
-  const editableNav = user?.role === "viewer" ? nav.filter((item) => ["dashboard", "insights", "reports"].includes(item.id)) : nav;
+  const editableNav = user?.role === "viewer" ? nav.filter((item) => ["dashboard", "workspaces", "executive", "insights", "reports", "accuracy"].includes(item.id)) : nav;
   const items = ["admin", "super_admin"].includes(user?.role)
     ? [...editableNav, { id: "integrations", label: "Integrations", icon: PlugZap }, { id: "settings", label: "Settings", icon: Settings }, { id: "admin", label: "Admin", icon: Shield }]
     : [...editableNav, { id: "settings", label: "Settings", icon: Settings }];

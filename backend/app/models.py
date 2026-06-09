@@ -309,3 +309,167 @@ class PasswordResetToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+class ForecastProject(Base):
+    __tablename__ = "forecast_projects"
+    __table_args__ = (Index("ix_projects_owner_status_created", "owner_id", "status", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(180), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectMember(Base):
+    __tablename__ = "project_members"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", name="uq_project_member_user"),
+        Index("ix_project_members_user_role", "user_id", "role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("forecast_projects.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(40), default="editor", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ProjectDataset(Base):
+    __tablename__ = "project_datasets"
+    __table_args__ = (
+        UniqueConstraint("project_id", "dataset_id", name="uq_project_dataset"),
+        Index("ix_project_datasets_dataset", "dataset_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("forecast_projects.id"), index=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    added_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ProjectActivity(Base):
+    __tablename__ = "project_activities"
+    __table_args__ = (Index("ix_project_activity_project_created", "project_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("forecast_projects.id"), index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(140), index=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ForecastScenario(Base):
+    __tablename__ = "forecast_scenarios"
+    __table_args__ = (Index("ix_scenarios_project_dataset_created", "project_id", "dataset_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("forecast_projects.id"), index=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    sales_growth_percent: Mapped[float] = mapped_column(Float, default=0)
+    seasonality_percent: Mapped[float] = mapped_column(Float, default=0)
+    demand_factor: Mapped[float] = mapped_column(Float, default=1)
+    price_change_percent: Mapped[float] = mapped_column(Float, default=0)
+    cost_change_percent: Mapped[float] = mapped_column(Float, default=0)
+    status: Mapped[str] = mapped_column(String(40), default="saved", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ForecastScenarioResult(Base):
+    __tablename__ = "forecast_scenario_results"
+    __table_args__ = (Index("ix_scenario_results_scenario_product", "scenario_id", "product"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("forecast_scenarios.id"), index=True)
+    product: Mapped[str] = mapped_column(String(255), index=True)
+    baseline_demand: Mapped[float] = mapped_column(Float, default=0)
+    scenario_demand: Mapped[float] = mapped_column(Float, default=0)
+    revenue_impact: Mapped[float] = mapped_column(Float, default=0)
+    profit_impact: Mapped[float] = mapped_column(Float, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ForecastComment(Base):
+    __tablename__ = "forecast_comments"
+    __table_args__ = (Index("ix_comments_project_run_created", "project_id", "run_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("forecast_projects.id"), index=True)
+    run_id: Mapped[Optional[int]] = mapped_column(ForeignKey("forecast_runs.id"), nullable=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ReportShare(Base):
+    __tablename__ = "report_shares"
+    __table_args__ = (Index("ix_report_shares_project_created", "project_id", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("forecast_projects.id"), index=True)
+    dataset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("datasets.id"), nullable=True, index=True)
+    shared_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    recipient_email: Mapped[str] = mapped_column(String(255), index=True)
+    access_level: Mapped[str] = mapped_column(String(40), default="view")
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ForecastRevision(Base):
+    __tablename__ = "forecast_revisions"
+    __table_args__ = (Index("ix_revisions_run_version", "run_id", "version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("forecast_runs.id"), index=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    metrics_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class DatasetVersion(Base):
+    __tablename__ = "dataset_versions"
+    __table_args__ = (Index("ix_dataset_versions_dataset_version", "dataset_id", "version"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    change_summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class DashboardLayout(Base):
+    __tablename__ = "dashboard_layouts"
+    __table_args__ = (Index("ix_dashboard_layouts_user_default", "user_id", "is_default"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160), default="Executive layout")
+    layout_json: Mapped[str] = mapped_column(Text, default="{}")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ExecutiveReportSchedule(Base):
+    __tablename__ = "executive_report_schedules"
+    __table_args__ = (Index("ix_exec_report_schedules_next_active", "is_active", "next_run_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("forecast_projects.id"), index=True)
+    dataset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("datasets.id"), nullable=True, index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    frequency: Mapped[str] = mapped_column(String(40), default="monthly")
+    report_type: Mapped[str] = mapped_column(String(80), default="executive_summary")
+    next_run_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

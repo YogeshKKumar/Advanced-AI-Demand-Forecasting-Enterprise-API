@@ -369,3 +369,178 @@ class DashboardSummaryOut(BaseModel):
     generated_at: datetime
     kpis: Dict[str, Any]
     insights: List[str]
+
+class ForecastProjectIn(BaseModel):
+    name: str = Field(..., min_length=2)
+    description: str = ""
+
+
+class ForecastProjectOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    owner_id: int
+    status: str
+    created_at: datetime
+    dataset_count: int = 0
+    forecast_count: int = 0
+
+
+class ProjectMemberIn(BaseModel):
+    user_id: int
+    role: str = Field("editor", pattern="^(owner|editor|viewer)$")
+
+
+class ProjectDatasetIn(BaseModel):
+    dataset_id: int
+
+
+class ProjectActivityOut(BaseModel):
+    id: int
+    action: str
+    metadata: Dict[str, Any]
+    created_at: datetime
+
+
+class ScenarioIn(BaseModel):
+    dataset_id: int
+    name: str = Field(..., min_length=2)
+    sales_growth_percent: float = Field(0, ge=-90, le=300)
+    seasonality_percent: float = Field(0, ge=-80, le=200)
+    demand_factor: float = Field(1, ge=0.1, le=5)
+    price_change_percent: float = Field(0, ge=-90, le=300)
+    cost_change_percent: float = Field(0, ge=-90, le=300)
+
+
+class ScenarioOut(BaseModel):
+    id: int
+    project_id: int
+    dataset_id: int
+    name: str
+    sales_growth_percent: float
+    seasonality_percent: float
+    demand_factor: float
+    price_change_percent: float
+    cost_change_percent: float
+    status: str
+    created_at: datetime
+    results: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ScenarioComparisonOut(BaseModel):
+    scenarios: List[ScenarioOut]
+    totals: List[Dict[str, Any]]
+
+
+class CommentIn(BaseModel):
+    body: str = Field(..., min_length=1)
+    run_id: Optional[int] = None
+
+
+class CommentOut(BaseModel):
+    id: int
+    project_id: int
+    run_id: Optional[int]
+    user_id: int
+    body: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ReportShareIn(BaseModel):
+    dataset_id: Optional[int] = None
+    recipient_email: EmailStr
+    access_level: str = Field("view", pattern="^(view|comment|edit)$")
+    expires_at: Optional[datetime] = None
+
+
+class ReportShareOut(BaseModel):
+    id: int
+    project_id: int
+    dataset_id: Optional[int]
+    recipient_email: EmailStr
+    access_level: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetVersionOut(BaseModel):
+    id: int
+    dataset_id: int
+    version: int
+    row_count: int
+    change_summary: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetCompareOut(BaseModel):
+    dataset_id: int
+    versions: List[DatasetVersionOut]
+    row_delta: int
+    product_count: int
+    category_count: int
+    region_count: int
+
+
+class ExecutiveDashboardOut(BaseModel):
+    revenue_forecast: float
+    profit_forecast: float
+    estimated_cost: float
+    growth_impact_percent: float
+    kpis: Dict[str, Any]
+    cost_analysis: List[Dict[str, Any]]
+    performance: List[Dict[str, Any]]
+    recommendations: List[str]
+
+
+class BIInsightsOut(BaseModel):
+    opportunities: List[Dict[str, Any]]
+    declining_products: List[Dict[str, Any]]
+    high_growth_products: List[Dict[str, Any]]
+    summaries: List[str]
+
+
+class AccuracyCenterOut(BaseModel):
+    model_performance: List[Dict[str, Any]]
+    accuracy_trends: List[Dict[str, Any]]
+    historical_performance: List[Dict[str, Any]]
+    improvement_summary: Dict[str, Any]
+    evaluation_report: List[str]
+
+
+class DashboardLayoutIn(BaseModel):
+    name: str = "Executive layout"
+    layout: Dict[str, Any] = Field(default_factory=dict)
+    is_default: bool = False
+
+
+class DashboardLayoutOut(DashboardLayoutIn):
+    id: int
+    user_id: int
+    created_at: datetime
+
+
+class ExecutiveReportScheduleIn(BaseModel):
+    project_id: int
+    dataset_id: Optional[int] = None
+    name: str
+    frequency: str = Field("monthly", pattern="^(weekly|monthly|quarterly)$")
+    report_type: str = Field("executive_summary")
+    is_active: bool = True
+
+
+class ExecutiveReportScheduleOut(ExecutiveReportScheduleIn):
+    id: int
+    created_by: int
+    next_run_at: datetime
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

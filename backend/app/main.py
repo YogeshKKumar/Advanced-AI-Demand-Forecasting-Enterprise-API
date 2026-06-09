@@ -18,51 +18,83 @@ from sqlalchemy.orm import Session
 from .auth import create_access_token, get_current_user, hash_password, require_admin, require_analyst, verify_password
 from .cache import dashboard_cache
 from .database import Base, SessionLocal, engine, get_db
-from .models import AlertRule, ApiMetric, ActivityLog, DashboardWidget, Dataset, ForecastRun, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ReportJob, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription
+from .models import AlertRule, ApiMetric, ActivityLog, DashboardLayout, DashboardWidget, Dataset, DatasetVersion, ExecutiveReportSchedule, ForecastComment, ForecastProject, ForecastRevision, ForecastRun, ForecastScenario, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ProjectDataset, ProjectMember, ReportJob, ReportShare, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription
 from .schemas import (
+    AccuracyCenterOut,
     ActivityOut,
     AdminSummary,
     AdvancedAnalyticsOut,
-    AnalyticsOut,
-    DatasetOut,
-    DatasetUploadResponse,
-    ForecastRequest,
-    ForecastResponse,
-    ForecastRunOut,
-    LiveSalesIn,
-    ModelComparisonItem,
-    MonitoringOut,
-    NotificationOut,
-    PaginatedDatasets,
-    ReportSummary,
-    RealtimeSnapshotOut,
-    RetrainingOut,
-    RoleUpdateIn,
-    SearchResultsOut,
-    Token,
-    UserCreate,
-    UserLogin,
-    UserOut,
     AlertRuleIn,
     AlertRuleOut,
+    AnalyticsOut,
+    BIInsightsOut,
+    CommentIn,
+    CommentOut,
+    DashboardLayoutIn,
+    DashboardLayoutOut,
     DashboardSummaryOut,
     DashboardWidgetIn,
     DashboardWidgetOut,
+    DatasetCompareOut,
+    DatasetOut,
+    DatasetUploadResponse,
+    DatasetVersionOut,
     EnterpriseInsightsOut,
+    ExecutiveDashboardOut,
+    ExecutiveReportScheduleIn,
+    ExecutiveReportScheduleOut,
+    ForecastProjectIn,
+    ForecastProjectOut,
+    ForecastRequest,
+    ForecastResponse,
+    ForecastRunOut,
     ForecastScheduleIn,
     ForecastScheduleOut,
     ForecastTrendOut,
     IntegrationIn,
     IntegrationOut,
+    LiveSalesIn,
+    ModelComparisonItem,
+    MonitoringOut,
+    NotificationOut,
+    PaginatedDatasets,
     PasswordResetConfirmIn,
     PasswordResetRequestIn,
     ProfileUpdateIn,
+    ProjectActivityOut,
+    ProjectDatasetIn,
+    ProjectMemberIn,
+    RealtimeSnapshotOut,
+    ReportShareIn,
+    ReportShareOut,
+    ReportSummary,
+    RetrainingOut,
+    RoleUpdateIn,
+    ScenarioComparisonOut,
+    ScenarioIn,
+    ScenarioOut,
+    SearchResultsOut,
+    Token,
+    UserCreate,
+    UserLogin,
+    UserOut,
     UserProfileOut,
     WebhookIn,
     WebhookOut,
 )
 from .services import (
     SUPPORTED_MODELS,
+    accuracy_center_payload,
+    bi_insights_payload,
+    create_scenario_plan,
+    dataset_comparison_payload,
+    executive_dashboard_payload,
+    get_project_or_404,
+    log_project_activity,
+    project_access_ids,
+    project_summary_payload,
+    scenario_comparison_payload,
+    scenario_payload,
     advanced_analytics_payload,
     automatically_retrain,
     analytics_payload,
@@ -782,3 +814,197 @@ async def update_user_status(user_id: int, is_active: bool, current_user: User =
     db.commit()
     db.refresh(user)
     return user
+
+@app.get("/api/projects", response_model=List[ForecastProjectOut], tags=["Projects"], summary="Forecast workspace projects")
+async def list_projects(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ids = project_access_ids(db, current_user)
+    query = db.query(ForecastProject)
+    if current_user.role not in {"admin", "super_admin"}:
+        query = query.filter(ForecastProject.id.in_(ids) if ids else False)
+    projects = query.order_by(ForecastProject.created_at.desc()).all()
+    return [project_summary_payload(db, project) for project in projects]
+
+
+@app.post("/api/projects", response_model=ForecastProjectOut, tags=["Projects"], summary="Create forecasting workspace")
+async def create_project(payload: ForecastProjectIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    project = ForecastProject(name=payload.name, description=payload.description, owner_id=current_user.id)
+    db.add(project)
+    db.flush()
+    db.add(ProjectMember(project_id=project.id, user_id=current_user.id, role="owner"))
+    log_project_activity(db, project.id, current_user.id, "project.created", {"name": project.name})
+    log_activity(db, current_user.id, "project.created", "project", project.id)
+    db.commit()
+    db.refresh(project)
+    return project_summary_payload(db, project)
+
+
+@app.post("/api/projects/{project_id}/datasets", tags=["Projects"], summary="Attach dataset to project")
+async def add_project_dataset(project_id: int, payload: ProjectDatasetIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    get_user_dataset(db, payload.dataset_id, current_user)
+    existing = db.query(ProjectDataset).filter(ProjectDataset.project_id == project_id, ProjectDataset.dataset_id == payload.dataset_id).first()
+    if not existing:
+        db.add(ProjectDataset(project_id=project_id, dataset_id=payload.dataset_id, added_by=current_user.id))
+        log_project_activity(db, project_id, current_user.id, "dataset.attached", {"dataset_id": payload.dataset_id})
+    db.commit()
+    return {"success": True}
+
+
+@app.post("/api/projects/{project_id}/members", tags=["Projects"], summary="Add project member")
+async def add_project_member(project_id: int, payload: ProjectMemberIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    member = db.query(ProjectMember).filter(ProjectMember.project_id == project_id, ProjectMember.user_id == payload.user_id).first()
+    if not member:
+        member = ProjectMember(project_id=project_id, user_id=payload.user_id)
+    member.role = payload.role
+    db.add(member)
+    log_project_activity(db, project_id, current_user.id, "member.updated", {"user_id": payload.user_id, "role": payload.role})
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/api/projects/{project_id}/activity", response_model=List[ProjectActivityOut], tags=["Projects"], summary="Project activity timeline")
+async def project_activity(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    rows = db.query(ProjectActivity).filter(ProjectActivity.project_id == project_id).order_by(ProjectActivity.created_at.desc()).limit(50).all()
+    return [{"id": row.id, "action": row.action, "metadata": __import__("json").loads(row.metadata_json or "{}"), "created_at": row.created_at} for row in rows]
+
+
+@app.post("/api/projects/{project_id}/scenarios", response_model=ScenarioOut, tags=["Scenarios"], summary="Create what-if scenario")
+async def create_scenario(project_id: int, payload: ScenarioIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    get_user_dataset(db, payload.dataset_id, current_user)
+    scenario = create_scenario_plan(db, project_id, current_user.id, payload.model_dump())
+    db.commit()
+    db.refresh(scenario)
+    return scenario_payload(db, scenario)
+
+
+@app.get("/api/projects/{project_id}/scenarios", response_model=List[ScenarioOut], tags=["Scenarios"], summary="Saved what-if scenarios")
+async def list_scenarios(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    rows = db.query(ForecastScenario).filter(ForecastScenario.project_id == project_id).order_by(ForecastScenario.created_at.desc()).all()
+    return [scenario_payload(db, row) for row in rows]
+
+
+@app.get("/api/projects/{project_id}/scenarios/compare", response_model=ScenarioComparisonOut, tags=["Scenarios"], summary="Compare what-if scenarios")
+async def compare_scenarios(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    return scenario_comparison_payload(db, project_id)
+
+
+@app.get("/api/bi/executive-dashboard", response_model=ExecutiveDashboardOut, tags=["Business Intelligence"], summary="Executive BI dashboard")
+async def executive_dashboard(project_id: Optional[int] = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return executive_dashboard_payload(db, current_user, project_id)
+
+
+@app.get("/api/bi/{dataset_id}/insights", response_model=BIInsightsOut, tags=["Business Intelligence"], summary="AI business recommendations")
+async def bi_insights(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    return bi_insights_payload(db, dataset_id)
+
+
+@app.post("/api/collaboration/projects/{project_id}/comments", response_model=CommentOut, tags=["Collaboration"], summary="Comment on forecast project or run")
+async def add_comment(project_id: int, payload: CommentIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    comment = ForecastComment(project_id=project_id, run_id=payload.run_id, user_id=current_user.id, body=payload.body)
+    db.add(comment)
+    log_project_activity(db, project_id, current_user.id, "comment.created", {"run_id": payload.run_id})
+    db.commit()
+    db.refresh(comment)
+    return comment
+
+
+@app.get("/api/collaboration/projects/{project_id}/comments", response_model=List[CommentOut], tags=["Collaboration"], summary="Project forecast comments")
+async def list_comments(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    return db.query(ForecastComment).filter(ForecastComment.project_id == project_id).order_by(ForecastComment.created_at.desc()).limit(80).all()
+
+
+@app.post("/api/collaboration/projects/{project_id}/shares", response_model=ReportShareOut, tags=["Collaboration"], summary="Share project report")
+async def share_report(project_id: int, payload: ReportShareIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_project_or_404(db, project_id, current_user)
+    share = ReportShare(project_id=project_id, shared_by=current_user.id, **payload.model_dump())
+    db.add(share)
+    log_project_activity(db, project_id, current_user.id, "report.shared", {"recipient": payload.recipient_email})
+    db.commit()
+    db.refresh(share)
+    return share
+
+
+@app.get("/api/collaboration/projects/{project_id}/timeline", response_model=List[ProjectActivityOut], tags=["Collaboration"], summary="Collaboration activity timeline")
+async def collaboration_timeline(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return await project_activity(project_id, current_user, db)
+
+
+@app.get("/api/datasets/{dataset_id}/versions", response_model=List[DatasetVersionOut], tags=["Datasets"], summary="Dataset upload/version history")
+async def dataset_versions(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    return db.query(DatasetVersion).filter(DatasetVersion.dataset_id == dataset_id).order_by(DatasetVersion.version.desc()).all()
+
+
+@app.post("/api/datasets/{dataset_id}/archive", tags=["Datasets"], summary="Archive dataset")
+async def archive_dataset(dataset_id: int, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    dataset = get_user_dataset(db, dataset_id, current_user)
+    dataset.status = "archived"
+    log_activity(db, current_user.id, "dataset.archived", "dataset", dataset.id)
+    db.commit()
+    return {"success": True, "status": dataset.status}
+
+
+@app.get("/api/datasets/{dataset_id}/compare", response_model=DatasetCompareOut, tags=["Datasets"], summary="Dataset comparison view")
+async def compare_dataset_versions(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    return dataset_comparison_payload(db, dataset_id)
+
+
+@app.get("/api/accuracy-center/{dataset_id}", response_model=AccuracyCenterOut, tags=["Accuracy Center"], summary="Model performance and forecast accuracy center")
+async def accuracy_center(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    return accuracy_center_payload(db, dataset_id)
+
+
+@app.get("/api/reports/executive/{project_id}", tags=["Reports"], summary="Executive summary report payload")
+async def executive_report(project_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    project = get_project_or_404(db, project_id, current_user)
+    payload = executive_dashboard_payload(db, current_user, project_id)
+    activities = db.query(ProjectActivity).filter(ProjectActivity.project_id == project_id).order_by(ProjectActivity.created_at.desc()).limit(8).all()
+    return {"project": project_summary_payload(db, project), "executive_dashboard": payload, "recent_activity": [{"action": row.action, "created_at": row.created_at} for row in activities]}
+
+
+@app.get("/api/reports/schedules", response_model=List[ExecutiveReportScheduleOut], tags=["Reports"], summary="Report scheduling configuration")
+async def report_schedules(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    query = db.query(ExecutiveReportSchedule)
+    if current_user.role not in {"admin", "super_admin"}:
+        query = query.filter(ExecutiveReportSchedule.created_by == current_user.id)
+    return query.order_by(ExecutiveReportSchedule.created_at.desc()).all()
+
+
+@app.post("/api/reports/schedules", response_model=ExecutiveReportScheduleOut, tags=["Reports"], summary="Create executive report schedule")
+async def create_report_schedule(payload: ExecutiveReportScheduleIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_project_or_404(db, payload.project_id, current_user)
+    schedule = ExecutiveReportSchedule(**payload.model_dump(), created_by=current_user.id, next_run_at=datetime.utcnow() + timedelta(days=30 if payload.frequency == "monthly" else 7))
+    db.add(schedule)
+    log_project_activity(db, payload.project_id, current_user.id, "report.schedule.created", {"frequency": payload.frequency})
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+@app.get("/api/dashboard/layouts", response_model=List[DashboardLayoutOut], tags=["Analytics"], summary="Saved dashboard layouts")
+async def list_dashboard_layouts(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = db.query(DashboardLayout).filter(DashboardLayout.user_id == current_user.id).order_by(DashboardLayout.created_at.desc()).all()
+    return [{"id": row.id, "user_id": row.user_id, "name": row.name, "layout": __import__("json").loads(row.layout_json or "{}"), "is_default": row.is_default, "created_at": row.created_at} for row in rows]
+
+
+@app.post("/api/dashboard/layouts", response_model=DashboardLayoutOut, tags=["Analytics"], summary="Save dashboard layout")
+async def save_dashboard_layout(payload: DashboardLayoutIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    layout = DashboardLayout(user_id=current_user.id, name=payload.name, layout_json=__import__("json").dumps(payload.layout), is_default=payload.is_default)
+    db.add(layout)
+    db.commit()
+    db.refresh(layout)
+    return {"id": layout.id, "user_id": layout.user_id, "name": layout.name, "layout": payload.layout, "is_default": layout.is_default, "created_at": layout.created_at}
+
+
+
+

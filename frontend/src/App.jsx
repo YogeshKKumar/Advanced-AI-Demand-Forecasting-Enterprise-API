@@ -6,6 +6,11 @@ import AuthPage from "./views/AuthPage";
 
 const AdminPage = lazy(() => import("./views/AdminPage"));
 const AutomationPage = lazy(() => import("./views/AutomationPage"));
+const AccuracyCenterPage = lazy(() => import("./views/AccuracyCenterPage"));
+const CollaborationPage = lazy(() => import("./views/CollaborationPage"));
+const ExecutiveDashboardPage = lazy(() => import("./views/ExecutiveDashboardPage"));
+const ScenarioPlannerPage = lazy(() => import("./views/ScenarioPlannerPage"));
+const WorkspacesPage = lazy(() => import("./views/WorkspacesPage"));
 const IntegrationsPage = lazy(() => import("./views/IntegrationsPage"));
 const SettingsPage = lazy(() => import("./views/SettingsPage"));
 const DashboardPage = lazy(() => import("./views/DashboardPage"));
@@ -128,6 +133,11 @@ export default function App() {
     <Layout activePage={activePage} setActivePage={setActivePage} notifications={notifications} refreshNotifications={loadNotifications}>
       <Suspense fallback={<div className="panel animate-pulse">Loading workspace module...</div>}>
         {activePage === "dashboard" && <DashboardPage {...common} filters={filters} setFilters={setFilters} datasetFilters={datasetFilters} onNavigate={setActivePage} />}
+        {activePage === "workspaces" && <WorkspacesPage {...common} />}
+        {activePage === "executive" && <ExecutiveDashboardPage {...common} />}
+        {activePage === "scenarios" && <ScenarioPlannerPage {...common} />}
+        {activePage === "collaboration" && <CollaborationPage {...common} />}
+        {activePage === "accuracy" && <AccuracyCenterPage {...common} />}
         {activePage === "insights" && <InsightsPage {...common} />}
         {activePage === "upload" && <UploadPage onUploaded={async (id) => { setSelectedDatasetId(String(id)); await common.refresh(); setActivePage("forecast"); }} />}
         {activePage === "forecast" && <ForecastPage {...common} />}

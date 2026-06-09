@@ -61,4 +61,8 @@ button, input, select { font: inherit; }
   .mini-list { @apply flex min-h-36 flex-col gap-2 rounded-lg border border-slate-200/70 bg-white/70 p-4 text-sm dark:border-white/10 dark:bg-white/5; }
   .mini-list b { @apply text-base; }
   .mini-list span { @apply rounded-md bg-slate-100 px-2 py-1 dark:bg-white/10; }
+  .decision-card { @apply rounded-lg border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-white/10 dark:bg-white/5; }
+  .decision-card b { @apply block text-lg; }
+  .board-column { @apply rounded-lg border border-white/70 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5; }
 }
+
