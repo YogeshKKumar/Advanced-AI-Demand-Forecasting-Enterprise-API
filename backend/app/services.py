@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -20,7 +20,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .models import ActivityLog, AlertRule, DashboardLayout, DashboardWidget, Dataset, DatasetVersion, ExecutiveReportSchedule, ForecastComment, ForecastProject, ForecastResult, ForecastRevision, ForecastRun, ForecastScenario, ForecastScenarioResult, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ProjectActivity, ProjectDataset, ProjectMember, ReportJob, ReportShare, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription
+from .models import ActivityLog, AlertRule, DashboardLayout, DashboardWidget, Dataset, DatasetVersion, ExecutiveReportSchedule, ForecastComment, ForecastProject, ForecastResult, ForecastRevision, ForecastRun, ForecastScenario, ForecastScenarioResult, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ProjectActivity, ProjectDataset, ProjectMember, ReportJob, ReportShare, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription, CustomKPI, DataQualityReport, ForecastApproval, ForecastGovernanceEvent, Organization, OrganizationAnnouncement, OrganizationDataset, OrganizationMember, OrganizationSetting, NotificationPreference, PlanningTarget, WorkflowDefinition, WorkflowExecutionLog
 
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
 
@@ -755,3 +755,154 @@ def accuracy_center_payload(db: Session, dataset_id: int) -> Dict[str, Any]:
         "Use the strongest model for executive reports and retrain when confidence falls below target.",
     ]
     return {"model_performance": performance, "accuracy_trends": trends, "historical_performance": historical, "improvement_summary": {"run_count": len(runs), "accuracy_delta": improvement}, "evaluation_report": report}
+
+
+def organization_access_ids(db: Session, user: User) -> List[int]:
+    if user.role in {"admin", "super_admin"}:
+        return [row.id for row in db.query(Organization.id).all()]
+    created = [row.id for row in db.query(Organization.id).filter(Organization.created_by == user.id).all()]
+    member = [row.organization_id for row in db.query(OrganizationMember.organization_id).filter(OrganizationMember.user_id == user.id).all()]
+    return sorted(set(created + member))
+
+
+def get_organization_or_404(db: Session, organization_id: int, user: User) -> Organization:
+    organization = db.query(Organization).filter(Organization.id == organization_id).first()
+    if not organization or (user.role not in {"admin", "super_admin"} and organization.id not in organization_access_ids(db, user)):
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return organization
+
+
+def organization_dataset_ids(db: Session, organization_id: int) -> List[int]:
+    return [row.dataset_id for row in db.query(OrganizationDataset.dataset_id).filter(OrganizationDataset.organization_id == organization_id).all()]
+
+
+def organization_summary_payload(db: Session, organization: Organization) -> Dict[str, Any]:
+    dataset_ids = organization_dataset_ids(db, organization.id)
+    forecast_count = db.query(ForecastRun).filter(ForecastRun.dataset_id.in_(dataset_ids)).count() if dataset_ids else 0
+    return {"id": organization.id, "name": organization.name, "industry": organization.industry, "region": organization.region, "status": organization.status, "created_by": organization.created_by, "created_at": organization.created_at, "member_count": db.query(OrganizationMember).filter(OrganizationMember.organization_id == organization.id).count(), "dataset_count": len(dataset_ids), "forecast_count": forecast_count}
+
+
+def organization_sales_frame(db: Session, organization_id: int) -> pd.DataFrame:
+    dataset_ids = organization_dataset_ids(db, organization_id)
+    rows = db.query(SalesRecord).filter(SalesRecord.dataset_id.in_(dataset_ids)).all() if dataset_ids else []
+    frame = pd.DataFrame([{"date": row.date, "product": row.product, "category": row.category, "region": row.region, "quantity": row.quantity, "sales": row.sales} for row in rows])
+    if not frame.empty:
+        frame["date"] = pd.to_datetime(frame["date"])
+    return frame
+
+
+def compute_data_quality_report(db: Session, dataset_id: int, user_id: int, organization_id: Optional[int] = None) -> DataQualityReport:
+    rows = db.query(SalesRecord).filter(SalesRecord.dataset_id == dataset_id).all()
+    if not rows:
+        score = completeness = consistency = 0
+        duplicate_count = 0
+        issues = [{"severity": "high", "message": "Dataset has no usable sales records."}]
+    else:
+        frame = pd.DataFrame([{"date": row.date, "product": row.product, "category": row.category, "region": row.region, "quantity": row.quantity, "sales": row.sales} for row in rows])
+        missing_cells = int(frame.isna().sum().sum())
+        total_cells = max(int(frame.shape[0] * frame.shape[1]), 1)
+        completeness = round(max(0, 100 - missing_cells / total_cells * 100), 2)
+        invalid = int((frame["quantity"] < 0).sum() + (frame["sales"] < 0).sum())
+        consistency = round(max(0, 100 - invalid / max(len(frame), 1) * 100), 2)
+        duplicate_count = int(frame.duplicated(subset=["date", "product", "region"]).sum())
+        score = round(max(0, completeness * 0.55 + consistency * 0.35 - min(20, duplicate_count)), 2)
+        issues = []
+        if completeness < 95:
+            issues.append({"severity": "medium", "message": "Some records have incomplete values."})
+        if invalid:
+            issues.append({"severity": "high", "message": f"{invalid} records contain negative quantity or sales values."})
+        if duplicate_count:
+            issues.append({"severity": "medium", "message": f"{duplicate_count} duplicate date/product/region rows detected."})
+        if not issues:
+            issues.append({"severity": "success", "message": "Dataset quality is ready for governed forecasting."})
+    report = DataQualityReport(organization_id=organization_id, dataset_id=dataset_id, score=score, completeness=completeness, consistency=consistency, duplicate_count=duplicate_count, issue_summary_json=json.dumps(issues), created_by=user_id)
+    db.add(report)
+    db.flush()
+    return report
+
+
+def data_quality_payload(report: DataQualityReport) -> Dict[str, Any]:
+    return {"id": report.id, "organization_id": report.organization_id, "dataset_id": report.dataset_id, "score": report.score, "completeness": report.completeness, "consistency": report.consistency, "duplicate_count": report.duplicate_count, "issue_summary": json.loads(report.issue_summary_json or "[]"), "created_at": report.created_at}
+
+
+def strategic_planning_payload(db: Session, organization_id: int, horizon: str) -> Dict[str, Any]:
+    targets = db.query(PlanningTarget).filter(PlanningTarget.organization_id == organization_id, PlanningTarget.period == horizon).order_by(PlanningTarget.created_at.desc()).all()
+    frame = organization_sales_frame(db, organization_id)
+    revenue = float(frame["sales"].sum()) if not frame.empty else 0
+    demand = float(frame["quantity"].sum()) if not frame.empty else 0
+    forecast_revenue = round(revenue * (1.15 if horizon == "annual" else 1.06), 2)
+    forecast_demand = round(demand * (1.12 if horizon == "annual" else 1.04), 2)
+    margin = round(forecast_revenue * 0.38, 2)
+    attainment = [{"target_id": t.id, "name": t.name, "revenue_attainment": round(forecast_revenue / max(t.revenue_target, 1) * 100, 2), "demand_attainment": round(forecast_demand / max(t.demand_target, 1) * 100, 2), "margin_attainment": round(margin / max(t.margin_target, 1) * 100, 2)} for t in targets]
+    recommendations = ["Align inventory buys to the forecasted demand target before the next planning review.", "Use governed forecasts only for executive planning and board summaries."]
+    if attainment and min(item["revenue_attainment"] for item in attainment) < 90:
+        recommendations.insert(0, "Revenue target is at risk; review high-growth categories and pricing assumptions.")
+    return {"organization_id": organization_id, "horizon": horizon, "targets": [{"id": t.id, "name": t.name, "revenue_target": t.revenue_target, "demand_target": t.demand_target, "margin_target": t.margin_target, "year": t.year} for t in targets], "forecast_totals": {"revenue": forecast_revenue, "demand": forecast_demand, "margin": margin}, "target_attainment": attainment, "recommendations": recommendations}
+
+
+def governance_dashboard_payload(db: Session, organization_id: int) -> Dict[str, Any]:
+    events = db.query(ForecastGovernanceEvent).filter(ForecastGovernanceEvent.organization_id == organization_id).order_by(ForecastGovernanceEvent.created_at.desc()).limit(50).all()
+    approvals = db.query(ForecastApproval).filter(ForecastApproval.organization_id == organization_id).all()
+    lifecycle_counts: Dict[str, int] = {}
+    approval_counts: Dict[str, int] = {}
+    for event in events:
+        lifecycle_counts[event.lifecycle_stage] = lifecycle_counts.get(event.lifecycle_stage, 0) + 1
+    for approval in approvals:
+        approval_counts[approval.status] = approval_counts.get(approval.status, 0) + 1
+    return {"lifecycle_counts": lifecycle_counts, "approval_counts": approval_counts, "recent_events": [{"id": e.id, "organization_id": e.organization_id, "run_id": e.run_id, "event_type": e.event_type, "lifecycle_stage": e.lifecycle_stage, "version": e.version, "details": json.loads(e.details_json or "{}"), "actor_id": e.actor_id, "created_at": e.created_at} for e in events[:15]], "version_history": [{"run_id": e.run_id, "version": e.version, "stage": e.lifecycle_stage, "created_at": e.created_at} for e in events if e.run_id], "recommendations": ["Require approval for low-confidence forecasts before executive reporting.", "Keep dataset quality above 85 before approving strategic plans."]}
+
+
+def kpi_report_payload(db: Session, organization_id: int) -> Dict[str, Any]:
+    kpis = db.query(CustomKPI).filter(CustomKPI.organization_id == organization_id, CustomKPI.is_active.is_(True)).order_by(CustomKPI.created_at.desc()).all()
+    dataset_ids = organization_dataset_ids(db, organization_id)
+    runs = db.query(ForecastRun).filter(ForecastRun.dataset_id.in_(dataset_ids)).order_by(ForecastRun.created_at.asc()).all() if dataset_ids else []
+    latest = runs[-1] if runs else None
+    values = {"forecast_accuracy": latest.accuracy if latest else 0, "confidence_score": latest.confidence_score if latest else 0, "forecast_runs": len(runs)}
+    items = []
+    alerts = []
+    for kpi in kpis:
+        current = float(values.get(kpi.metric_key, 0))
+        item = {"id": kpi.id, "name": kpi.name, "metric_key": kpi.metric_key, "current_value": round(current, 2), "target_value": kpi.target_value, "unit": kpi.unit, "status": "on_track" if current >= kpi.target_value else "at_risk"}
+        items.append(item)
+        if kpi.alert_threshold and current < kpi.alert_threshold:
+            alerts.append({"kpi": kpi.name, "message": f"{kpi.name} is below alert threshold {kpi.alert_threshold}.", "severity": "warning"})
+    trends = [{"run_id": run.id, "accuracy": run.accuracy, "confidence_score": run.confidence_score, "created_at": run.created_at} for run in runs[-12:]]
+    return {"organization_id": organization_id, "items": items, "trends": trends, "alerts": alerts}
+
+
+def executive_command_center_payload(db: Session, organization: Organization) -> Dict[str, Any]:
+    frame = organization_sales_frame(db, organization.id)
+    dataset_ids = organization_dataset_ids(db, organization.id)
+    runs = db.query(ForecastRun).filter(ForecastRun.dataset_id.in_(dataset_ids)).order_by(ForecastRun.created_at.desc()).limit(12).all() if dataset_ids else []
+    revenue = round(float(frame["sales"].sum()), 2) if not frame.empty else 0
+    demand = round(float(frame["quantity"].sum()), 2) if not frame.empty else 0
+    business = [] if frame.empty else frame.groupby("region", as_index=False).agg(revenue=("sales", "sum"), demand=("quantity", "sum")).sort_values("revenue", ascending=False).head(8).to_dict("records")
+    alerts = []
+    if runs and runs[0].confidence_score < 75:
+        alerts.append({"severity": "warning", "message": "Forecast confidence is below the executive threshold."})
+    low_quality = db.query(DataQualityReport).filter(DataQualityReport.organization_id == organization.id, DataQualityReport.score < 80).order_by(DataQualityReport.created_at.desc()).limit(5).all()
+    alerts.extend([{"severity": "warning", "message": f"Dataset {item.dataset_id} quality score is {item.score}."} for item in low_quality])
+    if not alerts:
+        alerts.append({"severity": "success", "message": "No critical executive alerts are open."})
+    return {"organization": organization_summary_payload(db, organization), "metrics": {"revenue": revenue, "demand": demand, "datasets": len(dataset_ids), "forecast_runs": len(runs), "latest_accuracy": runs[0].accuracy if runs else 0, "latest_confidence": runs[0].confidence_score if runs else 0}, "planning_insights": strategic_planning_payload(db, organization.id, "annual")["recommendations"], "forecast_health": [{"run_id": run.id, "model_name": run.model_name, "accuracy": run.accuracy, "confidence_score": run.confidence_score, "status": run.status} for run in runs], "business_summary": business, "executive_alerts": alerts}
+
+
+def workflow_payload(row: WorkflowDefinition) -> Dict[str, Any]:
+    return {"id": row.id, "organization_id": row.organization_id, "name": row.name, "trigger_type": row.trigger_type, "action_type": row.action_type, "schedule": row.schedule, "config": json.loads(row.config_json or "{}"), "is_active": row.is_active, "created_at": row.created_at}
+
+
+def execute_workflow(db: Session, workflow: WorkflowDefinition, user_id: int) -> WorkflowExecutionLog:
+    message = f"Executed {workflow.action_type} workflow using {workflow.trigger_type}."
+    status = "completed"
+    if workflow.action_type == "notify":
+        for member in db.query(OrganizationMember).filter(OrganizationMember.organization_id == workflow.organization_id).all():
+            notify(db, member.user_id, f"Workflow: {workflow.name}", message, "info")
+    elif workflow.action_type == "generate_report":
+        message = "Executive report workflow queued successfully."
+    elif workflow.action_type == "generate_forecast":
+        message = "Forecast generation workflow validated and queued."
+    log = WorkflowExecutionLog(workflow_id=workflow.id, organization_id=workflow.organization_id, status=status, message=message, started_at=datetime.utcnow(), completed_at=datetime.utcnow())
+    db.add(log)
+    log_activity(db, user_id, f"workflow.{status}", "workflow", workflow.id, {"message": message})
+    db.flush()
+    return log

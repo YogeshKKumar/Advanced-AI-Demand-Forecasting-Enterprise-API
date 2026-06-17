@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -542,5 +542,203 @@ class ExecutiveReportScheduleOut(ExecutiveReportScheduleIn):
     next_run_at: datetime
     created_at: datetime
 
+    class Config:
+        from_attributes = True
+
+
+class OrganizationIn(BaseModel):
+    name: str = Field(..., min_length=2)
+    industry: str = "Retail"
+    region: str = "Global"
+    status: str = Field("active", pattern="^(active|paused|archived)$")
+
+class OrganizationOut(OrganizationIn):
+    id: int
+    created_by: int
+    created_at: datetime
+    member_count: int = 0
+    dataset_count: int = 0
+    forecast_count: int = 0
+    class Config:
+        from_attributes = True
+
+class OrganizationMemberIn(BaseModel):
+    user_id: int
+    role: str = Field("analyst", pattern="^(owner|admin|manager|analyst|viewer)$")
+
+class OrganizationDatasetIn(BaseModel):
+    dataset_id: int
+
+class OrganizationSettingIn(BaseModel):
+    key: str
+    value: Dict[str, Any] = Field(default_factory=dict)
+
+class OrganizationSettingOut(BaseModel):
+    id: int
+    organization_id: int
+    key: str
+    value: Dict[str, Any]
+    updated_at: datetime
+
+class ForecastApprovalIn(BaseModel):
+    organization_id: int
+    run_id: int
+    notes: str = ""
+
+class ForecastApprovalDecisionIn(BaseModel):
+    status: str = Field(..., pattern="^(approved|rejected)$")
+    decision_notes: str = ""
+
+class ForecastApprovalOut(BaseModel):
+    id: int
+    organization_id: int
+    run_id: int
+    submitted_by: int
+    reviewed_by: Optional[int]
+    status: str
+    notes: str
+    decision_notes: str
+    created_at: datetime
+    reviewed_at: Optional[datetime]
+    class Config:
+        from_attributes = True
+
+class WorkflowDefinitionIn(BaseModel):
+    organization_id: int
+    name: str = Field(..., min_length=2)
+    trigger_type: str = "scheduled_forecast"
+    action_type: str = "generate_forecast"
+    schedule: str = "daily"
+    config: Dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+class WorkflowDefinitionOut(BaseModel):
+    id: int
+    organization_id: int
+    name: str
+    trigger_type: str
+    action_type: str
+    schedule: str
+    config: Dict[str, Any]
+    is_active: bool
+    created_at: datetime
+
+class WorkflowExecutionOut(BaseModel):
+    id: int
+    workflow_id: int
+    organization_id: int
+    status: str
+    message: str
+    started_at: datetime
+    completed_at: Optional[datetime]
+    class Config:
+        from_attributes = True
+
+class PlanningTargetIn(BaseModel):
+    organization_id: int
+    name: str
+    period: str = Field("annual", pattern="^(annual|quarterly)$")
+    year: int = Field(default_factory=lambda: datetime.utcnow().year)
+    revenue_target: float = Field(0, ge=0)
+    demand_target: float = Field(0, ge=0)
+    margin_target: float = Field(0, ge=0)
+
+class PlanningTargetOut(PlanningTargetIn):
+    id: int
+    created_by: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class StrategicPlanningOut(BaseModel):
+    organization_id: int
+    horizon: str
+    targets: List[Dict[str, Any]]
+    forecast_totals: Dict[str, Any]
+    target_attainment: List[Dict[str, Any]]
+    recommendations: List[str]
+
+class GovernanceEventOut(BaseModel):
+    id: int
+    organization_id: int
+    run_id: Optional[int]
+    event_type: str
+    lifecycle_stage: str
+    version: int
+    details: Dict[str, Any]
+    actor_id: Optional[int]
+    created_at: datetime
+
+class GovernanceDashboardOut(BaseModel):
+    lifecycle_counts: Dict[str, int]
+    approval_counts: Dict[str, int]
+    recent_events: List[GovernanceEventOut]
+    version_history: List[Dict[str, Any]]
+    recommendations: List[str]
+
+class CustomKPIIn(BaseModel):
+    organization_id: int
+    name: str = Field(..., min_length=2)
+    metric_key: str = "forecast_accuracy"
+    target_value: float = 0
+    alert_threshold: float = 0
+    unit: str = "value"
+    is_active: bool = True
+
+class CustomKPIOut(CustomKPIIn):
+    id: int
+    created_by: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class KPIReportOut(BaseModel):
+    organization_id: int
+    items: List[Dict[str, Any]]
+    trends: List[Dict[str, Any]]
+    alerts: List[Dict[str, Any]]
+
+class DataQualityReportOut(BaseModel):
+    id: int
+    organization_id: Optional[int]
+    dataset_id: int
+    score: float
+    completeness: float
+    consistency: float
+    duplicate_count: int
+    issue_summary: List[Dict[str, Any]]
+    created_at: datetime
+
+class ExecutiveCommandCenterOut(BaseModel):
+    organization: OrganizationOut
+    metrics: Dict[str, Any]
+    planning_insights: List[str]
+    forecast_health: List[Dict[str, Any]]
+    business_summary: List[Dict[str, Any]]
+    executive_alerts: List[Dict[str, Any]]
+
+class NotificationPreferenceIn(BaseModel):
+    organization_id: Optional[int] = None
+    event_type: str = "all"
+    channel: str = Field("in_app", pattern="^(in_app|email)$")
+    is_enabled: bool = True
+
+class NotificationPreferenceOut(NotificationPreferenceIn):
+    id: int
+    user_id: int
+    updated_at: datetime
+    class Config:
+        from_attributes = True
+
+class AnnouncementIn(BaseModel):
+    organization_id: int
+    title: str = Field(..., min_length=2)
+    message: str = Field(..., min_length=2)
+    severity: str = Field("info", pattern="^(info|success|warning|error)$")
+
+class AnnouncementOut(AnnouncementIn):
+    id: int
+    created_by: int
+    created_at: datetime
     class Config:
         from_attributes = True

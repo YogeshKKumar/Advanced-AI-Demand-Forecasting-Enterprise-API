@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import defaultdict, deque
 
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from .auth import create_access_token, get_current_user, hash_password, require_admin, require_analyst, verify_password
 from .cache import dashboard_cache
 from .database import Base, SessionLocal, engine, get_db
-from .models import AlertRule, ApiMetric, ActivityLog, DashboardLayout, DashboardWidget, Dataset, DatasetVersion, ExecutiveReportSchedule, ForecastComment, ForecastProject, ForecastRevision, ForecastRun, ForecastScenario, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ProjectDataset, ProjectMember, ReportJob, ReportShare, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription
+from .models import AlertRule, ApiMetric, ActivityLog, DashboardLayout, DashboardWidget, Dataset, DatasetVersion, ExecutiveReportSchedule, ForecastComment, ForecastProject, ForecastRevision, ForecastRun, ForecastScenario, ForecastSchedule, Integration, ModelMetric, Notification, PasswordResetToken, ProjectDataset, ProjectMember, ReportJob, ReportShare, RetrainingJob, SalesRecord, User, UserProfile, WebhookSubscription, CustomKPI, DataQualityReport, ForecastApproval, ForecastGovernanceEvent, Organization, OrganizationAnnouncement, OrganizationDataset, OrganizationMember, OrganizationSetting, NotificationPreference, PlanningTarget, WorkflowDefinition, WorkflowExecutionLog
 from .schemas import (
     AccuracyCenterOut,
     ActivityOut,
@@ -81,6 +81,32 @@ from .schemas import (
     UserProfileOut,
     WebhookIn,
     WebhookOut,
+    AnnouncementIn,
+    AnnouncementOut,
+    CustomKPIIn,
+    CustomKPIOut,
+    DataQualityReportOut,
+    ExecutiveCommandCenterOut,
+    ForecastApprovalDecisionIn,
+    ForecastApprovalIn,
+    ForecastApprovalOut,
+    GovernanceDashboardOut,
+    GovernanceEventOut,
+    KPIReportOut,
+    NotificationPreferenceIn,
+    NotificationPreferenceOut,
+    OrganizationDatasetIn,
+    OrganizationIn,
+    OrganizationMemberIn,
+    OrganizationOut,
+    OrganizationSettingIn,
+    OrganizationSettingOut,
+    PlanningTargetIn,
+    PlanningTargetOut,
+    StrategicPlanningOut,
+    WorkflowDefinitionIn,
+    WorkflowDefinitionOut,
+    WorkflowExecutionOut,
 )
 from .services import (
     SUPPORTED_MODELS,
@@ -115,6 +141,18 @@ from .services import (
     evaluate_alert_rules,
     forecast_trend_payload,
     run_due_forecast_schedules,
+    compute_data_quality_report,
+    data_quality_payload,
+    execute_workflow,
+    executive_command_center_payload,
+    get_organization_or_404,
+    governance_dashboard_payload,
+    kpi_report_payload,
+    organization_access_ids,
+    organization_dataset_ids,
+    organization_summary_payload,
+    strategic_planning_payload,
+    workflow_payload,
 )
 from .settings import settings
 
@@ -1005,6 +1043,280 @@ async def save_dashboard_layout(payload: DashboardLayoutIn, current_user: User =
     db.refresh(layout)
     return {"id": layout.id, "user_id": layout.user_id, "name": layout.name, "layout": payload.layout, "is_default": layout.is_default, "created_at": layout.created_at}
 
+
+
+
+
+
+@app.get("/api/organizations", response_model=List[OrganizationOut], tags=["Organizations"], summary="List accessible organizations")
+async def list_organizations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ids = organization_access_ids(db, current_user)
+    query = db.query(Organization)
+    if current_user.role not in {"admin", "super_admin"}:
+        query = query.filter(Organization.id.in_(ids) if ids else False)
+    return [organization_summary_payload(db, row) for row in query.order_by(Organization.created_at.desc()).all()]
+
+
+@app.post("/api/organizations", response_model=OrganizationOut, tags=["Organizations"], summary="Create enterprise organization")
+async def create_organization(payload: OrganizationIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    organization = Organization(**payload.model_dump(), created_by=current_user.id)
+    db.add(organization)
+    db.flush()
+    db.add(OrganizationMember(organization_id=organization.id, user_id=current_user.id, role="owner"))
+    log_activity(db, current_user.id, "organization.created", "organization", organization.id, {"name": organization.name})
+    db.commit()
+    db.refresh(organization)
+    return organization_summary_payload(db, organization)
+
+
+@app.post("/api/organizations/{organization_id}/members", tags=["Organizations"], summary="Add or update organization member")
+async def upsert_organization_member(organization_id: int, payload: OrganizationMemberIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    member = db.query(OrganizationMember).filter(OrganizationMember.organization_id == organization_id, OrganizationMember.user_id == payload.user_id).first()
+    if not member:
+        member = OrganizationMember(organization_id=organization_id, user_id=payload.user_id)
+    member.role = payload.role
+    db.add(member)
+    log_activity(db, current_user.id, "organization.member.updated", "organization", organization_id, {"user_id": payload.user_id, "role": payload.role})
+    db.commit()
+    return {"success": True}
+
+
+@app.post("/api/organizations/{organization_id}/datasets", tags=["Organizations"], summary="Attach dataset to organization")
+async def attach_organization_dataset(organization_id: int, payload: OrganizationDatasetIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    get_user_dataset(db, payload.dataset_id, current_user)
+    existing = db.query(OrganizationDataset).filter(OrganizationDataset.organization_id == organization_id, OrganizationDataset.dataset_id == payload.dataset_id).first()
+    if not existing:
+        db.add(OrganizationDataset(organization_id=organization_id, dataset_id=payload.dataset_id, attached_by=current_user.id))
+        log_activity(db, current_user.id, "organization.dataset.attached", "organization", organization_id, {"dataset_id": payload.dataset_id})
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/api/organizations/{organization_id}/settings", response_model=List[OrganizationSettingOut], tags=["Organizations"], summary="Organization-level settings")
+async def organization_settings(organization_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    rows = db.query(OrganizationSetting).filter(OrganizationSetting.organization_id == organization_id).order_by(OrganizationSetting.key).all()
+    return [{"id": row.id, "organization_id": row.organization_id, "key": row.key, "value": __import__("json").loads(row.value_json or "{}"), "updated_at": row.updated_at} for row in rows]
+
+
+@app.post("/api/organizations/{organization_id}/settings", response_model=OrganizationSettingOut, tags=["Organizations"], summary="Create or update organization setting")
+async def upsert_organization_setting(organization_id: int, payload: OrganizationSettingIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    row = db.query(OrganizationSetting).filter(OrganizationSetting.organization_id == organization_id, OrganizationSetting.key == payload.key).first()
+    if not row:
+        row = OrganizationSetting(organization_id=organization_id, key=payload.key, updated_by=current_user.id)
+    row.value_json = __import__("json").dumps(payload.value)
+    row.updated_by = current_user.id
+    db.add(row)
+    log_activity(db, current_user.id, "organization.setting.updated", "organization", organization_id, {"key": payload.key})
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "organization_id": row.organization_id, "key": row.key, "value": payload.value, "updated_at": row.updated_at}
+
+
+@app.post("/api/approvals", response_model=ForecastApprovalOut, tags=["Approvals"], summary="Submit forecast for approval")
+async def submit_forecast_approval(payload: ForecastApprovalIn, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_organization_or_404(db, payload.organization_id, current_user)
+    run = db.query(ForecastRun).filter(ForecastRun.id == payload.run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Forecast run not found")
+    approval = ForecastApproval(**payload.model_dump(), submitted_by=current_user.id)
+    db.add(approval)
+    db.flush()
+    db.add(ForecastGovernanceEvent(organization_id=payload.organization_id, run_id=payload.run_id, event_type="approval.submitted", lifecycle_stage="submitted", version=1, actor_id=current_user.id))
+    log_activity(db, current_user.id, "forecast.approval.submitted", "forecast_run", payload.run_id)
+    db.commit()
+    db.refresh(approval)
+    return approval
+
+
+@app.get("/api/approvals", response_model=List[ForecastApprovalOut], tags=["Approvals"], summary="Forecast approval queue")
+async def list_forecast_approvals(organization_id: Optional[int] = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    query = db.query(ForecastApproval)
+    if organization_id:
+        get_organization_or_404(db, organization_id, current_user)
+        query = query.filter(ForecastApproval.organization_id == organization_id)
+    elif current_user.role not in {"admin", "super_admin"}:
+        ids = organization_access_ids(db, current_user)
+        query = query.filter(ForecastApproval.organization_id.in_(ids) if ids else False)
+    return query.order_by(ForecastApproval.created_at.desc()).limit(100).all()
+
+
+@app.patch("/api/approvals/{approval_id}", response_model=ForecastApprovalOut, tags=["Approvals"], summary="Approve or reject forecast")
+async def decide_forecast_approval(approval_id: int, payload: ForecastApprovalDecisionIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    approval = db.query(ForecastApproval).filter(ForecastApproval.id == approval_id).first()
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    get_organization_or_404(db, approval.organization_id, current_user)
+    approval.status = payload.status
+    approval.decision_notes = payload.decision_notes
+    approval.reviewed_by = current_user.id
+    approval.reviewed_at = datetime.utcnow()
+    db.add(ForecastGovernanceEvent(organization_id=approval.organization_id, run_id=approval.run_id, event_type=f"approval.{payload.status}", lifecycle_stage=payload.status, version=1, actor_id=current_user.id))
+    log_activity(db, current_user.id, f"forecast.approval.{payload.status}", "forecast_run", approval.run_id)
+    db.commit()
+    db.refresh(approval)
+    return approval
+
+
+@app.get("/api/workflows", response_model=List[WorkflowDefinitionOut], tags=["Workflows"], summary="Configurable workflow definitions")
+async def list_workflows(organization_id: Optional[int] = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    query = db.query(WorkflowDefinition)
+    if organization_id:
+        get_organization_or_404(db, organization_id, current_user)
+        query = query.filter(WorkflowDefinition.organization_id == organization_id)
+    elif current_user.role not in {"admin", "super_admin"}:
+        ids = organization_access_ids(db, current_user)
+        query = query.filter(WorkflowDefinition.organization_id.in_(ids) if ids else False)
+    return [workflow_payload(row) for row in query.order_by(WorkflowDefinition.created_at.desc()).all()]
+
+
+@app.post("/api/workflows", response_model=WorkflowDefinitionOut, tags=["Workflows"], summary="Create workflow automation")
+async def create_workflow(payload: WorkflowDefinitionIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    get_organization_or_404(db, payload.organization_id, current_user)
+    row = WorkflowDefinition(organization_id=payload.organization_id, name=payload.name, trigger_type=payload.trigger_type, action_type=payload.action_type, schedule=payload.schedule, config_json=__import__("json").dumps(payload.config), is_active=payload.is_active, created_by=current_user.id)
+    db.add(row)
+    log_activity(db, current_user.id, "workflow.created", "organization", payload.organization_id, {"name": payload.name})
+    db.commit()
+    db.refresh(row)
+    return workflow_payload(row)
+
+
+@app.post("/api/workflows/{workflow_id}/execute", response_model=WorkflowExecutionOut, tags=["Workflows"], summary="Execute workflow and write execution log")
+async def execute_workflow_now(workflow_id: int, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    get_organization_or_404(db, workflow.organization_id, current_user)
+    log = execute_workflow(db, workflow, current_user.id)
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+@app.get("/api/workflows/{workflow_id}/logs", response_model=List[WorkflowExecutionOut], tags=["Workflows"], summary="Workflow execution logs")
+async def workflow_logs(workflow_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    workflow = db.query(WorkflowDefinition).filter(WorkflowDefinition.id == workflow_id).first()
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    get_organization_or_404(db, workflow.organization_id, current_user)
+    return db.query(WorkflowExecutionLog).filter(WorkflowExecutionLog.workflow_id == workflow_id).order_by(WorkflowExecutionLog.started_at.desc()).limit(50).all()
+
+
+@app.post("/api/planning/targets", response_model=PlanningTargetOut, tags=["Strategic Planning"], summary="Create annual or quarterly business target")
+async def create_planning_target(payload: PlanningTargetIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    get_organization_or_404(db, payload.organization_id, current_user)
+    target = PlanningTarget(**payload.model_dump(), created_by=current_user.id)
+    db.add(target)
+    log_activity(db, current_user.id, "planning.target.created", "organization", payload.organization_id, {"name": payload.name})
+    db.commit()
+    db.refresh(target)
+    return target
+
+
+@app.get("/api/planning/{organization_id}", response_model=StrategicPlanningOut, tags=["Strategic Planning"], summary="Annual or quarterly planning dashboard")
+async def strategic_planning(organization_id: int, horizon: str = Query("annual", pattern="^(annual|quarterly)$"), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    return strategic_planning_payload(db, organization_id, horizon)
+
+
+@app.get("/api/governance/{organization_id}", response_model=GovernanceDashboardOut, tags=["Governance"], summary="Forecast governance center dashboard")
+async def governance_dashboard(organization_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    return governance_dashboard_payload(db, organization_id)
+
+
+@app.post("/api/governance/{organization_id}/events", response_model=GovernanceEventOut, tags=["Governance"], summary="Track forecast lifecycle event")
+async def create_governance_event(organization_id: int, run_id: Optional[int] = None, event_type: str = "forecast.modified", lifecycle_stage: str = "revised", current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    latest = db.query(ForecastGovernanceEvent).filter(ForecastGovernanceEvent.run_id == run_id).order_by(ForecastGovernanceEvent.version.desc()).first() if run_id else None
+    event = ForecastGovernanceEvent(organization_id=organization_id, run_id=run_id, event_type=event_type, lifecycle_stage=lifecycle_stage, version=(latest.version + 1 if latest else 1), details_json="{}", actor_id=current_user.id)
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return {"id": event.id, "organization_id": event.organization_id, "run_id": event.run_id, "event_type": event.event_type, "lifecycle_stage": event.lifecycle_stage, "version": event.version, "details": {}, "actor_id": event.actor_id, "created_at": event.created_at}
+
+
+@app.get("/api/kpis/{organization_id}", response_model=KPIReportOut, tags=["KPI Management"], summary="Custom KPI performance report")
+async def kpi_report(organization_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    return kpi_report_payload(db, organization_id)
+
+
+@app.post("/api/kpis", response_model=CustomKPIOut, tags=["KPI Management"], summary="Create custom KPI")
+async def create_custom_kpi(payload: CustomKPIIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    get_organization_or_404(db, payload.organization_id, current_user)
+    row = CustomKPI(**payload.model_dump(), created_by=current_user.id)
+    db.add(row)
+    log_activity(db, current_user.id, "kpi.created", "organization", payload.organization_id, {"metric": payload.metric_key})
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.post("/api/data-quality/{dataset_id}", response_model=DataQualityReportOut, tags=["Data Quality"], summary="Generate dataset quality report")
+async def generate_data_quality_report(dataset_id: int, organization_id: Optional[int] = None, current_user: User = Depends(require_analyst), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    if organization_id:
+        get_organization_or_404(db, organization_id, current_user)
+    report = compute_data_quality_report(db, dataset_id, current_user.id, organization_id)
+    log_activity(db, current_user.id, "data_quality.generated", "dataset", dataset_id, {"score": report.score})
+    db.commit()
+    db.refresh(report)
+    return data_quality_payload(report)
+
+
+@app.get("/api/data-quality/{dataset_id}/history", response_model=List[DataQualityReportOut], tags=["Data Quality"], summary="Dataset quality report history")
+async def data_quality_history(dataset_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_user_dataset(db, dataset_id, current_user)
+    rows = db.query(DataQualityReport).filter(DataQualityReport.dataset_id == dataset_id).order_by(DataQualityReport.created_at.desc()).limit(30).all()
+    return [data_quality_payload(row) for row in rows]
+
+
+@app.get("/api/command-center/{organization_id}", response_model=ExecutiveCommandCenterOut, tags=["Executive Command Center"], summary="Organization-wide executive analytics dashboard")
+async def executive_command_center(organization_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    organization = get_organization_or_404(db, organization_id, current_user)
+    return executive_command_center_payload(db, organization)
+
+
+@app.get("/api/notification-preferences", response_model=List[NotificationPreferenceOut], tags=["Notification Center"], summary="User notification preferences")
+async def list_notification_preferences(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(NotificationPreference).filter(NotificationPreference.user_id == current_user.id).order_by(NotificationPreference.updated_at.desc()).all()
+
+
+@app.post("/api/notification-preferences", response_model=NotificationPreferenceOut, tags=["Notification Center"], summary="Create or update notification preference")
+async def upsert_notification_preference(payload: NotificationPreferenceIn, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if payload.organization_id:
+        get_organization_or_404(db, payload.organization_id, current_user)
+    row = db.query(NotificationPreference).filter(NotificationPreference.user_id == current_user.id, NotificationPreference.organization_id == payload.organization_id, NotificationPreference.event_type == payload.event_type, NotificationPreference.channel == payload.channel).first()
+    if not row:
+        row = NotificationPreference(user_id=current_user.id, organization_id=payload.organization_id, event_type=payload.event_type, channel=payload.channel)
+    row.is_enabled = payload.is_enabled
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.post("/api/announcements", response_model=AnnouncementOut, tags=["Notification Center"], summary="Create organization-wide announcement")
+async def create_announcement(payload: AnnouncementIn, current_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    get_organization_or_404(db, payload.organization_id, current_user)
+    row = OrganizationAnnouncement(**payload.model_dump(), created_by=current_user.id)
+    db.add(row)
+    for member in db.query(OrganizationMember).filter(OrganizationMember.organization_id == payload.organization_id).all():
+        notify(db, member.user_id, payload.title, payload.message, payload.severity)
+    log_activity(db, current_user.id, "announcement.created", "organization", payload.organization_id, {"title": payload.title})
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.get("/api/announcements/{organization_id}", response_model=List[AnnouncementOut], tags=["Notification Center"], summary="Organization announcement history")
+async def list_announcements(organization_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    get_organization_or_404(db, organization_id, current_user)
+    return db.query(OrganizationAnnouncement).filter(OrganizationAnnouncement.organization_id == organization_id).order_by(OrganizationAnnouncement.created_at.desc()).limit(50).all()
 
 
 

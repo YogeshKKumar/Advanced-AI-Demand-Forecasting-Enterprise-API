@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import List, Optional
@@ -473,3 +473,174 @@ class ExecutiveReportSchedule(Base):
     next_run_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+    __table_args__ = (Index("ix_organizations_status_created", "status", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(180), index=True)
+    industry: Mapped[str] = mapped_column(String(120), default="Retail")
+    region: Mapped[str] = mapped_column(String(120), default="Global")
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OrganizationMember(Base):
+    __tablename__ = "organization_members"
+    __table_args__ = (UniqueConstraint("organization_id", "user_id", name="uq_org_member_user"), Index("ix_org_members_user_role", "user_id", "role"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(40), default="analyst", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class OrganizationDataset(Base):
+    __tablename__ = "organization_datasets"
+    __table_args__ = (UniqueConstraint("organization_id", "dataset_id", name="uq_org_dataset"), Index("ix_org_datasets_dataset", "dataset_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    attached_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class OrganizationSetting(Base):
+    __tablename__ = "organization_settings"
+    __table_args__ = (Index("ix_org_settings_org_key", "organization_id", "key"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    key: Mapped[str] = mapped_column(String(120), index=True)
+    value_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ForecastApproval(Base):
+    __tablename__ = "forecast_approvals"
+    __table_args__ = (Index("ix_approvals_org_status_created", "organization_id", "status", "created_at"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("forecast_runs.id"), index=True)
+    submitted_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    reviewed_by: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="submitted", index=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    decision_notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class WorkflowDefinition(Base):
+    __tablename__ = "workflow_definitions"
+    __table_args__ = (Index("ix_workflows_org_active", "organization_id", "is_active"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    trigger_type: Mapped[str] = mapped_column(String(80), default="scheduled_forecast", index=True)
+    action_type: Mapped[str] = mapped_column(String(80), default="generate_forecast", index=True)
+    schedule: Mapped[str] = mapped_column(String(80), default="daily")
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class WorkflowExecutionLog(Base):
+    __tablename__ = "workflow_execution_logs"
+    __table_args__ = (Index("ix_workflow_logs_workflow_started", "workflow_id", "started_at"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workflow_id: Mapped[int] = mapped_column(ForeignKey("workflow_definitions.id"), index=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="completed", index=True)
+    message: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class PlanningTarget(Base):
+    __tablename__ = "planning_targets"
+    __table_args__ = (Index("ix_targets_org_period", "organization_id", "period", "year"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    period: Mapped[str] = mapped_column(String(40), default="annual", index=True)
+    year: Mapped[int] = mapped_column(Integer, default=datetime.utcnow().year, index=True)
+    revenue_target: Mapped[float] = mapped_column(Float, default=0)
+    demand_target: Mapped[float] = mapped_column(Float, default=0)
+    margin_target: Mapped[float] = mapped_column(Float, default=0)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class ForecastGovernanceEvent(Base):
+    __tablename__ = "forecast_governance_events"
+    __table_args__ = (Index("ix_governance_run_created", "run_id", "created_at"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    run_id: Mapped[Optional[int]] = mapped_column(ForeignKey("forecast_runs.id"), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    lifecycle_stage: Mapped[str] = mapped_column(String(80), default="draft", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+    actor_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CustomKPI(Base):
+    __tablename__ = "custom_kpis"
+    __table_args__ = (Index("ix_kpis_org_active", "organization_id", "is_active"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    metric_key: Mapped[str] = mapped_column(String(120), index=True)
+    target_value: Mapped[float] = mapped_column(Float, default=0)
+    alert_threshold: Mapped[float] = mapped_column(Float, default=0)
+    unit: Mapped[str] = mapped_column(String(40), default="value")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class DataQualityReport(Base):
+    __tablename__ = "data_quality_reports"
+    __table_args__ = (Index("ix_quality_dataset_created", "dataset_id", "created_at"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[Optional[int]] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("datasets.id"), index=True)
+    score: Mapped[float] = mapped_column(Float, default=0)
+    completeness: Mapped[float] = mapped_column(Float, default=0)
+    consistency: Mapped[float] = mapped_column(Float, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
+    issue_summary_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class NotificationPreference(Base):
+    __tablename__ = "notification_preferences"
+    __table_args__ = (Index("ix_notification_preferences_user_org", "user_id", "organization_id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    organization_id: Mapped[Optional[int]] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), default="all", index=True)
+    channel: Mapped[str] = mapped_column(String(40), default="in_app")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OrganizationAnnouncement(Base):
+    __tablename__ = "organization_announcements"
+    __table_args__ = (Index("ix_announcements_org_created", "organization_id", "created_at"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True)
+    title: Mapped[str] = mapped_column(String(180))
+    message: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(40), default="info", index=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+

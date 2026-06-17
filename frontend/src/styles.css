@@ -1,4 +1,4 @@
-﻿@tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -13,6 +13,15 @@ button, input, select { font: inherit; }
   .metric-card { @apply flex min-h-32 items-center gap-4 rounded-lg border border-white/70 bg-white/80 p-5 shadow-panel backdrop-blur-xl transition hover:-translate-y-1 dark:border-white/10 dark:bg-slate-900/75; }
   .nav-button { @apply flex h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-black text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10; }
   .nav-active { @apply bg-ocean text-white shadow-lg hover:bg-ocean dark:text-white; }
+  .enterprise-nav { scrollbar-width: thin; scrollbar-color: rgb(20 184 166 / 0.55) transparent; }
+  .enterprise-nav::-webkit-scrollbar { width: 7px; }
+  .enterprise-nav::-webkit-scrollbar-thumb { @apply rounded-full bg-mint/50; }
+  .enterprise-nav::-webkit-scrollbar-track { @apply bg-transparent; }
+  .notification-popover { @apply z-50; }
+  .notification-item { @apply flex w-full items-start gap-3 rounded-lg border p-3 text-left transition hover:-translate-y-0.5 hover:border-mint hover:bg-mint/5; }
+  .notification-read { @apply border-slate-200 bg-white dark:border-white/10 dark:bg-white/5; }
+  .notification-unread { @apply border-mint/40 bg-mint/10 shadow-sm; }
+  .notification-dot { @apply mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full; }
   .icon-button { @apply relative grid h-11 w-11 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-mint hover:text-ocean dark:border-white/10 dark:bg-white/5 dark:text-slate-200; }
   .input { @apply h-12 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold outline-none transition focus:border-mint focus:ring-4 focus:ring-mint/10 dark:border-white/10 dark:bg-white/5 dark:text-slate-100; }
   .filter-bar { @apply grid gap-3 rounded-lg border border-white/70 bg-white/60 p-4 shadow-sm backdrop-blur dark:border-white/10 dark:bg-white/5 md:grid-cols-4; }
@@ -65,4 +74,5 @@ button, input, select { font: inherit; }
   .decision-card b { @apply block text-lg; }
   .board-column { @apply rounded-lg border border-white/70 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5; }
 }
+
 

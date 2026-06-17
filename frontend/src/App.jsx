@@ -1,4 +1,4 @@
-﻿import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import api from "./api/client";
 import Layout from "./components/Layout";
 import { useAuth } from "./state/AuthContext";
@@ -18,6 +18,13 @@ const ForecastPage = lazy(() => import("./views/ForecastPage"));
 const InsightsPage = lazy(() => import("./views/InsightsPage"));
 const ReportsPage = lazy(() => import("./views/ReportsPage"));
 const UploadPage = lazy(() => import("./views/UploadPage"));
+const OrganizationsPage = lazy(() => import("./views/OrganizationsPage"));
+const ApprovalsPage = lazy(() => import("./views/ApprovalsPage"));
+const EnterprisePlanningPage = lazy(() => import("./views/EnterprisePlanningPage"));
+const GovernanceCenterPage = lazy(() => import("./views/GovernanceCenterPage"));
+const QualityKpiPage = lazy(() => import("./views/QualityKpiPage"));
+const CommandCenterPage = lazy(() => import("./views/CommandCenterPage"));
+const NotificationCenterPage = lazy(() => import("./views/NotificationCenterPage"));
 
 export default function App() {
   const { user } = useAuth();
@@ -145,11 +152,20 @@ export default function App() {
         {activePage === "automation" && <AutomationPage {...common} />}
         {activePage === "integrations" && <IntegrationsPage {...common} />}
         {activePage === "settings" && <SettingsPage {...common} />}
+        {activePage === "organizations" && <OrganizationsPage {...common} />}
+        {activePage === "approvals" && <ApprovalsPage {...common} />}
+        {activePage === "enterprise-planning" && <EnterprisePlanningPage {...common} />}
+        {activePage === "governance" && <GovernanceCenterPage {...common} />}
+        {activePage === "quality-kpi" && <QualityKpiPage {...common} />}
+        {activePage === "command-center" && <CommandCenterPage {...common} />}
+        {activePage === "notification-center" && <NotificationCenterPage {...common} />}
         {activePage === "admin" && <AdminPage />}
       </Suspense>
     </Layout>
   );
 }
+
+
 
 
 
